@@ -36,7 +36,19 @@ jobs:
 
       - name: Test node control modules
         working-directory: go-gost/x
-        run: go test -mod=readonly ./realm ./socket
+        run: |
+          set +e
+          test_output=$(go test -mod=readonly ./realm ./socket 2>&1)
+          test_status=$?
+          set -e
+          printf '%s\n' "$test_output"
+          if [ "$test_status" -ne 0 ]; then
+            annotation=${test_output//'%'/'%25'}
+            annotation=${annotation//$'\r'/'%0D'}
+            annotation=${annotation//$'\n'/'%0A'}
+            echo "::error title=Go test failed::$annotation"
+            exit "$test_status"
+          fi
 
       - uses: actions/setup-node@v4
         with:
