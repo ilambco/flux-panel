@@ -4,6 +4,8 @@ set -e
 # 解决 macOS 下 tr 可能出现的非法字节序列问题
 export LANG=en_US.UTF-8
 export LC_ALL=C
+# 非交互 SSH、sudo 或部分面板终端可能缺少系统管理命令目录。
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin:${PATH:-}"
 
 
 
@@ -40,17 +42,24 @@ get_docker_compose_url() {
 
 # 检查 docker-compose 或 docker compose 命令
 check_docker() {
-  if command -v docker-compose &> /dev/null; then
-    DOCKER_CMD="docker-compose"
-  elif command -v docker &> /dev/null; then
-    if docker compose version &> /dev/null; then
-      DOCKER_CMD="docker compose"
+  local docker_bin compose_bin
+  docker_bin=$(command -v docker 2>/dev/null || true)
+  compose_bin=$(command -v docker-compose 2>/dev/null || true)
+
+  if [[ -n "$compose_bin" ]]; then
+    DOCKER_CMD="$compose_bin"
+  elif [[ -n "$docker_bin" ]]; then
+    if "$docker_bin" compose version &> /dev/null; then
+      DOCKER_CMD="$docker_bin compose"
     else
       echo "错误：检测到 docker，但不支持 'docker compose' 命令。请安装 docker-compose 或更新 docker 版本。"
       exit 1
     fi
   else
-    echo "错误：未检测到 docker 或 docker-compose 命令。请先安装 Docker。"
+    echo "错误：当前终端找不到 docker 或 docker-compose 命令。"
+    echo "主机名：$(hostname 2>/dev/null || echo unknown)"
+    echo "PATH：$PATH"
+    echo "请确认当前连接的是部署面板的 VPS，而不是容器内部。"
     exit 1
   fi
   echo "检测到 Docker 命令：$DOCKER_CMD"
