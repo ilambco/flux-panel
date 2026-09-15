@@ -56,6 +56,21 @@ check_docker() {
   echo "检测到 Docker 命令：$DOCKER_CMD"
 }
 
+pull_panel_images() {
+  echo "🌐 检查 GitHub 容器镜像仓库连接..."
+  if ! curl -4 --silent --show-error --head --connect-timeout 8 --max-time 15 https://ghcr.io/v2/ > /dev/null; then
+    echo "⚠️ 当前 VPS 连接 ghcr.io 较慢或不可用，镜像拉取可能长时间等待"
+    echo "💡 可按 Ctrl+C 保留现有面板，网络恢复后重新执行更新命令"
+  fi
+
+  echo "⬇️ 正在拉取前端、后端和数据库镜像，已下载的分层会自动复用..."
+  if [[ "$DOCKER_CMD" == "docker compose" ]] && docker compose --help 2>/dev/null | grep -q -- '--progress'; then
+    docker compose --progress plain pull
+  else
+    $DOCKER_CMD pull
+  fi
+}
+
 # 更新命令可在任意目录执行：优先使用当前位置，否则从已运行容器定位部署目录。
 locate_panel_directory() {
   if [[ -f "docker-compose.yml" && -f ".env" ]]; then
@@ -316,8 +331,7 @@ update_panel() {
     configure_docker_ipv6
   fi
 
-  echo "⬇️ 拉取最新镜像..."
-  $DOCKER_CMD pull
+  pull_panel_images
 
   echo "🚀 切换到更新后的服务..."
   $DOCKER_CMD up -d
@@ -1278,5 +1292,5 @@ main() {
   done
 }
 
-# 执行主函数
-main
+# 执行主函数，并保留 install/update 等命令行参数。
+main "$@"
