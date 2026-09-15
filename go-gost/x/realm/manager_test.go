@@ -9,6 +9,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/go-gost/x/trafficcounter"
 )
 
 func TestConfig(t *testing.T) {
@@ -56,6 +58,14 @@ func testManager(t *testing.T, run Runner) (*Manager, string, string) {
 	if err := os.WriteFile(binary, []byte("binary"), 0755); err != nil {
 		t.Fatal(err)
 	}
+	oldCounter := trafficcounter.Default
+	nft := filepath.Join(root, "nft")
+	if err := os.WriteFile(nft, []byte("binary"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	trafficcounter.Default = &trafficcounter.Manager{Dir: filepath.Join(root, "counters"), Binary: nft,
+		Run: func(_ context.Context, _ ...string) ([]byte, error) { return []byte(`{"nftables":[]}`), nil }}
+	t.Cleanup(func() { trafficcounter.Default = oldCounter })
 	return &Manager{ConfigDir: configDir, UnitDir: unitDir, Binary: binary, Run: run}, configDir, unitDir
 }
 
@@ -65,7 +75,7 @@ func TestApplyAndDelete(t *testing.T) {
 		calls = append(calls, append([]string(nil), args...))
 		return nil
 	})
-	r := Request{ID: "42", ListenPort: 2443, Remote: "example.com:443"}
+	r := Request{ID: "42", Name: "42_1_0", ListenPort: 2443, Remote: "example.com:443"}
 	if err := m.Execute("ApplyRealm", r); err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +111,7 @@ func TestFailedFirstApplyRemovesPartialState(t *testing.T) {
 		}
 		return nil
 	})
-	err := m.Execute("ApplyRealm", Request{ID: "7", ListenPort: 9000, Remote: "127.0.0.1:9001"})
+	err := m.Execute("ApplyRealm", Request{ID: "7", Name: "7_1_0", ListenPort: 9000, Remote: "127.0.0.1:9001"})
 	if err == nil || !strings.Contains(err.Error(), "previous configuration restored") {
 		t.Fatalf("unexpected error: %v", err)
 	}

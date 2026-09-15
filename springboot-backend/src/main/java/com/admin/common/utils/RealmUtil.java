@@ -8,8 +8,9 @@ import com.alibaba.fastjson.JSONObject;
 public final class RealmUtil {
     private RealmUtil() {}
 
-    public static GostDto apply(Long nodeId, Forward forward) {
+    public static GostDto apply(Long nodeId, Forward forward, String serviceName) {
         JSONObject data = request(forward);
+        data.put("name", serviceName);
         return WebSocketServer.send_msg(nodeId, data, "ApplyRealm");
     }
 

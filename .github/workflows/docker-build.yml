@@ -27,6 +27,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Validate install scripts
+        run: bash -n install.sh panel_install.sh
+
       - uses: actions/setup-go@v5
         with:
           go-version: "1.23.4"
@@ -38,7 +41,7 @@ jobs:
         working-directory: go-gost/x
         run: |
           set +e
-          test_output=$(go test -mod=readonly ./realm ./socket 2>&1)
+          test_output=$(go test -mod=readonly ./forwarder ./trafficcounter ./realm ./service ./socket 2>&1)
           test_status=$?
           set -e
           printf '%s\n' "$test_output"
@@ -69,7 +72,9 @@ jobs:
 
       - name: Build backend
         working-directory: springboot-backend
-        run: mvn --batch-mode package -DskipTests
+        run: |
+          mvn --batch-mode -Dtest=FlowBillingUtilTests test
+          mvn --batch-mode package -DskipTests
 
   build-agent:
     name: Build node agent

@@ -13,6 +13,7 @@
             ut.flow,
             ut.in_flow as inFlow,
             ut.out_flow as outFlow,
+            ut.used_flow as usedFlow,
             ut.num,
             ut.flow_reset_time as flowResetTime,
             ut.exp_time as expTime,
@@ -38,6 +39,7 @@
             f.remote_addr as remoteAddr,
             f.in_flow as inFlow,
             f.out_flow as outFlow,
+            f.used_flow as usedFlow,
             f.status,
             f.created_time as createdTime
         FROM forward f
@@ -57,6 +59,7 @@
             99999 as flow,
             0 as inFlow,
             0 as outFlow,
+            0 as usedFlow,
             99999 as num,
             null as flowResetTime,
             null as expTime,

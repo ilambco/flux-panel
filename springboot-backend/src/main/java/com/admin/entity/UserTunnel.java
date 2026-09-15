@@ -39,6 +39,8 @@ public class UserTunnel implements Serializable {
 
     private Long outFlow;
 
+    private Long usedFlow;
+
     private Long flowResetTime;
 
     private Long expTime;

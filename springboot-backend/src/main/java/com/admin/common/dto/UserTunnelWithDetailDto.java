@@ -69,7 +69,7 @@ public class UserTunnelWithDetailDto {
     private String tunnelName;
     
     /**
-     * 隧道流量计算类型（1-单向，2-双向）
+     * 隧道流量计算类型（1-仅出向，2-双向合计，3-双向取最大值）
      */
     private Integer tunnelFlow;
     
@@ -83,6 +83,9 @@ public class UserTunnelWithDetailDto {
      */
     private Long outFlow;
 
+    /** 已按链路计费模式计算的流量（字节） */
+    private Long usedFlow;
+
     private Integer status;
 
-} 
+}

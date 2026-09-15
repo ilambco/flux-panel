@@ -84,6 +84,9 @@ public class ForwardWithTunnelDto {
      */
     private Long outFlow;
 
+    /** 已按链路计费模式计算的流量（字节） */
+    private Long usedFlow;
+
     private String strategy;
 
     private String engine;

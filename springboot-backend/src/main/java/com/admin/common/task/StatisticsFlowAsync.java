@@ -52,7 +52,7 @@ public class StatisticsFlowAsync {
         List<StatisticsFlow> statisticsFlowList = new ArrayList<>();
 
         for (User user : list) {
-            long currentFlow = user.getInFlow() + user.getOutFlow();
+            long currentFlow = user.getUsedFlow() == null ? 0L : user.getUsedFlow();
 
             // 从数据库获取上一次记录
             StatisticsFlow lastFlowRecord = statisticsFlowService.getOne(

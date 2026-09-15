@@ -11,6 +11,7 @@
             ut.flow,
             ut.in_flow as inFlow,
             ut.out_flow as outFlow,
+            ut.used_flow as usedFlow,
             ut.num,
             ut.flow_reset_time as flowResetTime,
             ut.exp_time as expTime,

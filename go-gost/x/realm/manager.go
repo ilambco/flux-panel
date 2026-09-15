@@ -16,10 +16,13 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/go-gost/x/trafficcounter"
 )
 
 type Request struct {
 	ID         string `json:"id"`
+	Name       string `json:"name"`
 	ListenPort int    `json:"listenPort"`
 	Remote     string `json:"remote"`
 }
@@ -102,6 +105,11 @@ func Validate(r Request) error {
 	return nil
 }
 
+func validServiceName(name string) bool {
+	matched, _ := regexp.MatchString(`^[1-9][0-9]{0,17}_[0-9]{1,18}_[0-9]{1,18}$`, name)
+	return matched
+}
+
 func Config(r Request) ([]byte, error) {
 	if err := Validate(r); err != nil {
 		return nil, err
@@ -134,15 +142,26 @@ func (m *Manager) Execute(action string, r Request) error {
 		if _, err := os.Stat(conf); err != nil {
 			return fmt.Errorf("realm rule missing: %w", err)
 		}
-		return m.run("disable", "--now", unit)
+		if err := m.run("disable", "--now", unit); err != nil {
+			return err
+		}
+		return trafficcounter.Default.Pause(r.ID)
 	case "ResumeRealm":
 		if _, err := os.Stat(conf); err != nil {
 			return fmt.Errorf("realm rule missing: %w", err)
 		}
-		if err := m.run("enable", "--now", unit); err != nil {
+		if err := trafficcounter.Default.Resume(r.ID); err != nil {
 			return err
 		}
-		return m.healthy(unit)
+		if err := m.run("enable", "--now", unit); err != nil {
+			_ = trafficcounter.Default.Pause(r.ID)
+			return err
+		}
+		if err := m.healthy(unit); err != nil {
+			_ = trafficcounter.Default.Pause(r.ID)
+			return err
+		}
+		return nil
 	case "DeleteRealm":
 		// Stop before deleting files. An uncertain/failed stop retains recoverable state.
 		if _, err := os.Stat(unitPath); errors.Is(err, os.ErrNotExist) {
@@ -160,6 +179,9 @@ func (m *Manager) Execute(action string, r Request) error {
 			return err
 		}
 		if err := os.Remove(conf); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		if err := trafficcounter.Default.Delete(r.ID); err != nil {
 			return err
 		}
 		return m.run("daemon-reload")
@@ -223,6 +245,9 @@ func restoreFile(path string, data []byte, mode os.FileMode) error {
 }
 
 func (m *Manager) apply(r Request, conf, unitPath, unit string) error {
+	if !validServiceName(r.Name) {
+		return errors.New("invalid service name")
+	}
 	data, err := Config(r)
 	if err != nil {
 		return err
@@ -309,6 +334,10 @@ WantedBy=multi-user.target
 		return rollback(err)
 	}
 	if err := m.healthy(unit); err != nil {
+		return rollback(err)
+	}
+	if err := trafficcounter.Default.Apply(trafficcounter.Metadata{ID: r.ID, Name: r.Name, ListenPort: r.ListenPort}); err != nil {
+		_ = trafficcounter.Default.Delete(r.ID)
 		return rollback(err)
 	}
 	return nil

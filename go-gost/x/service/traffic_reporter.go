@@ -13,6 +13,7 @@ import (
 	"github.com/go-gost/x/config"
 	"github.com/go-gost/x/internal/util/crypto"
 	"github.com/go-gost/x/registry"
+	"github.com/go-gost/x/trafficcounter"
 )
 
 var httpReportURL string
@@ -226,6 +227,44 @@ func StartConfigReporter(ctx context.Context) {
 
 		case <-ctx.Done():
 			fmt.Printf("⏹️ 配置定时上报器已停止\n")
+			return
+		}
+	}
+}
+
+// StartExternalTrafficReporter uploads nftables deltas for Realm, iptables,
+// nftables, socat and Nginx rules. A sample is acknowledged only after the
+// panel accepts it, so transient HTTP failures do not lose traffic.
+func StartExternalTrafficReporter(ctx context.Context) {
+	if httpReportURL == "" {
+		return
+	}
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			samples, err := trafficcounter.Default.Samples()
+			if err != nil {
+				fmt.Printf("❌ 外部转发流量读取失败: %v\n", err)
+				continue
+			}
+			for _, sample := range samples {
+				if sample.Ingress == 0 && sample.Egress == 0 {
+					continue
+				}
+				success, err := sendTrafficReport(ctx, TrafficReportItem{
+					N: sample.Name, U: sample.Egress, D: sample.Ingress,
+				})
+				if err != nil {
+					fmt.Printf("❌ 外部转发流量上报失败: %v\n", err)
+					continue
+				}
+				if success {
+					trafficcounter.Default.Ack(sample)
+				}
+			}
+		case <-ctx.Done():
 			return
 		}
 	}

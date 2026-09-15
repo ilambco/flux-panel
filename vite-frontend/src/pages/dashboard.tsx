@@ -12,6 +12,7 @@ interface UserInfo {
   flow: number;
   inFlow: number;
   outFlow: number;
+  usedFlow?: number;
   num: number;
   expTime?: string;
   flowResetTime?: number;
@@ -24,6 +25,7 @@ interface UserTunnel {
   flow: number;
   inFlow: number;
   outFlow: number;
+  usedFlow?: number;
   num: number;
   expTime?: string;
   flowResetTime?: number;
@@ -40,6 +42,7 @@ interface Forward {
   remoteAddr: string;
   inFlow: number;
   outFlow: number;
+  usedFlow?: number;
 }
 
 interface AddressItem {
@@ -302,8 +305,7 @@ export default function DashboardPage() {
   };
 
   const calculateUserTotalUsedFlow = (): number => {
-    // 后端已按计费类型处理流量，前端直接使用入站+出站总和
-    return (userInfo.inFlow || 0) + (userInfo.outFlow || 0);
+    return userInfo.usedFlow ?? ((userInfo.inFlow || 0) + (userInfo.outFlow || 0));
   };
 
   const calculateUsagePercentage = (type: 'flow' | 'forwards'): number => {
@@ -356,10 +358,7 @@ export default function DashboardPage() {
 
   const calculateTunnelUsedFlow = (tunnel: UserTunnel): number => {
     if (!tunnel) return 0;
-    const inFlow = tunnel.inFlow || 0;
-    const outFlow = tunnel.outFlow || 0;
-    // 后端已按计费类型处理流量，前端直接使用入站+出站总和
-    return inFlow + outFlow;
+    return tunnel.usedFlow ?? ((tunnel.inFlow || 0) + (tunnel.outFlow || 0));
   };
 
   const calculateTunnelFlowPercentage = (tunnel: UserTunnel): number => {
@@ -565,11 +564,7 @@ export default function DashboardPage() {
   const calculateForwardBillingFlow = (forward: Forward): number => {
     if (!forward) return 0;
     
-    const inFlow = forward.inFlow || 0;
-    const outFlow = forward.outFlow || 0;
-    
-    // 后端已按计费类型处理流量，前端直接使用入站+出站总和
-    return inFlow + outFlow;
+    return forward.usedFlow ?? ((forward.inFlow || 0) + (forward.outFlow || 0));
   };
 
       if (loading) {
@@ -789,7 +784,7 @@ export default function DashboardPage() {
                            <h3 className="font-semibold text-foreground">{tunnel.tunnelName} ID: {tunnel.id}</h3>
                            <div className="flex flex-wrap items-center gap-2 mt-1">
                              <span className={`px-2 py-1 rounded-md text-xs font-medium ${tunnel.tunnelFlow === 1 ? 'bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-300' : 'bg-orange-100 dark:bg-orange-500/20 text-orange-700 dark:text-orange-300'}`}>
-                               {tunnel.tunnelFlow === 1 ? '单向计费' : '双向计费'}
+                               {tunnel.tunnelFlow === 1 ? '仅出向' : tunnel.tunnelFlow === 3 ? '双向取大' : '双向合计'}
                              </span>
                              <span className={`px-2 py-1 rounded-md text-xs font-medium border ${tunnelExpStatus.bg} ${tunnelExpStatus.color}`}>
                                {tunnelExpStatus.text}
@@ -955,4 +950,4 @@ export default function DashboardPage() {
       </div>
           
   );
-} 
+}

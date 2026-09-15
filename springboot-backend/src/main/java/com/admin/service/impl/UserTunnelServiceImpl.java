@@ -14,6 +14,7 @@ import com.admin.service.ForwardService;
 import com.admin.service.NodeService;
 import com.admin.common.utils.GostUtil;
 import com.admin.common.utils.RealmUtil;
+import com.admin.common.utils.ForwarderUtil;
 import com.admin.entity.Forward;
 import com.admin.entity.Tunnel;
 import com.admin.entity.Node;
@@ -303,9 +304,9 @@ public class UserTunnelServiceImpl extends ServiceImpl<UserTunnelMapper, UserTun
             
             String serviceName = buildServiceName(forward.getId(), Long.valueOf(userId), userTunnelId);
 
-            if ("realm".equalsIgnoreCase(forward.getEngine())) {
+            if (ForwarderUtil.isExternal(forward)) {
                 if (inNode != null) {
-                    RealmUtil.delete(inNode.getId(), forward.getId());
+                    ForwarderUtil.deleteAny(inNode.getId(), forward);
                 }
                 return;
             }
@@ -440,7 +441,7 @@ public class UserTunnelServiceImpl extends ServiceImpl<UserTunnelMapper, UserTun
 
         // 5. 批量更新该用户在该隧道下所有转发的限速配置（只更新入口节点）
         for (Forward forward : userTunnelForwards) {
-            if ("realm".equalsIgnoreCase(forward.getEngine())) {
+            if (ForwarderUtil.isExternal(forward)) {
                 continue;
             }
             String serviceName = buildServiceName(forward.getId(), Long.valueOf(userId), userTunnel.getId());

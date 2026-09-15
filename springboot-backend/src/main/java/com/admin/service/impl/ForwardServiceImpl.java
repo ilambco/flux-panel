@@ -8,6 +8,7 @@ import com.admin.common.lang.R;
 import com.admin.common.utils.GostUtil;
 import com.admin.common.utils.JwtUtil;
 import com.admin.common.utils.RealmUtil;
+import com.admin.common.utils.ForwarderUtil;
 import com.admin.common.utils.WebSocketServer;
 import com.admin.entity.*;
 import com.admin.mapper.ForwardMapper;
@@ -51,6 +52,8 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
     private static final int TUNNEL_STATUS_ACTIVE = 1;
     private static final String ENGINE_GOST = "gost";
     private static final String ENGINE_REALM = "realm";
+    private static final Set<String> EXTERNAL_ENGINES = new HashSet<>(Arrays.asList(
+            ENGINE_REALM, "iptables", "nftables", "socat", "nginx"));
 
     private static final long BYTES_TO_GB = 1024L * 1024L * 1024L;
 
@@ -414,10 +417,9 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         String serviceName = buildServiceName(forward.getId(), forward.getUserId(), userTunnel);
         GostDto gostResult;
 
-        if (ENGINE_REALM.equals(engineOf(forward))) {
-            gostResult = "PauseService".equals(gostMethod)
-                    ? RealmUtil.pause(nodeInfo.getInNode().getId(), forward.getId())
-                    : RealmUtil.resume(nodeInfo.getInNode().getId(), forward.getId());
+        if (isExternalEngine(engineOf(forward))) {
+            gostResult = controlExternalRuntime(nodeInfo.getInNode().getId(), forward,
+                    "PauseService".equals(gostMethod));
         } else if ("PauseService".equals(gostMethod)) {
             gostResult = GostUtil.PauseService(nodeInfo.getInNode().getId(), serviceName);
 
@@ -890,13 +892,12 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         }
 
         // 检查用户总流量限制
-        if (userInfo.getFlow() * BYTES_TO_GB <= userInfo.getInFlow() + userInfo.getOutFlow()) {
+        if (userInfo.getFlow() * BYTES_TO_GB <= defaultZero(userInfo.getUsedFlow())) {
             return R.err("用户总流量已用完，无法恢复服务");
         }
 
-        // 检查隧道流量限制
-        // 数据库中的流量已按计费类型处理，直接使用总和
-        long tunnelFlow = userTunnel.getInFlow() + userTunnel.getOutFlow();
+        // 检查按链路计费模式累计的隧道流量
+        long tunnelFlow = defaultZero(userTunnel.getUsedFlow());
 
         if (userTunnel.getFlow() * BYTES_TO_GB <= tunnelFlow) {
             return R.err("该隧道流量已用完，无法恢复服务");
@@ -1004,36 +1005,66 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         return normalizeEngine(forward.getEngine());
     }
 
+    private boolean isExternalEngine(String engine) {
+        return EXTERNAL_ENGINES.contains(engine);
+    }
+
     private R validateEngineRequest(UserInfo user, Tunnel tunnel, String engine, String remoteAddr,
                                     String interfaceName, String strategy) {
-        if (!ENGINE_GOST.equals(engine) && !ENGINE_REALM.equals(engine)) {
+        if (!ENGINE_GOST.equals(engine) && !EXTERNAL_ENGINES.contains(engine)) {
             return R.err("不支持的转发工具");
         }
-        if (!ENGINE_REALM.equals(engine)) {
+        if (ENGINE_GOST.equals(engine)) {
             return R.ok();
         }
         if (user.getRoleId() != ADMIN_ROLE_ID) {
-            return R.err("Realm 当前仅供管理员自用");
+            return R.err("外部转发工具当前仅供管理员自用");
         }
         if (tunnel.getType() != TUNNEL_TYPE_PORT_FORWARD) {
-            return R.err("Realm 第一版仅支持单节点端口转发");
+            return R.err("外部转发工具仅支持单节点端口转发");
         }
         if (remoteAddr == null || remoteAddr.contains(",")) {
-            return R.err("Realm 第一版仅支持一个目标地址");
+            return R.err("外部转发工具仅支持一个目标地址");
         }
         if (StringUtils.isNotBlank(interfaceName)) {
-            return R.err("Realm 第一版暂不支持指定出口网卡或 IP");
+            return R.err("外部转发工具暂不支持指定出口网卡或 IP");
         }
         if (StringUtils.isNotBlank(strategy) && !"fifo".equals(strategy)) {
-            return R.err("Realm 第一版暂不支持负载策略");
+            return R.err("外部转发工具暂不支持负载策略");
         }
         return R.ok();
     }
 
+    private long defaultZero(Long value) {
+        return value == null ? 0L : value;
+    }
+
+    private GostDto applyExternalRuntime(Long nodeId, Forward forward, String serviceName) {
+        if (ENGINE_REALM.equals(engineOf(forward))) {
+            return RealmUtil.apply(nodeId, forward, serviceName);
+        }
+        return ForwarderUtil.apply(nodeId, forward, serviceName);
+    }
+
+    private GostDto controlExternalRuntime(Long nodeId, Forward forward, boolean pause) {
+        if (ENGINE_REALM.equals(engineOf(forward))) {
+            return pause ? RealmUtil.pause(nodeId, forward.getId()) : RealmUtil.resume(nodeId, forward.getId());
+        }
+        return pause ? ForwarderUtil.pause(nodeId, forward) : ForwarderUtil.resume(nodeId, forward);
+    }
+
+    private GostDto deleteExternalRuntime(Long nodeId, Forward forward) {
+        if (ENGINE_REALM.equals(engineOf(forward))) {
+            return RealmUtil.delete(nodeId, forward.getId());
+        }
+        return ForwarderUtil.delete(nodeId, forward);
+    }
+
     private R createRuntimeServices(Forward forward, Tunnel tunnel, Integer limiter,
                                     NodeInfo nodeInfo, UserTunnel userTunnel) {
-        if (ENGINE_REALM.equals(engineOf(forward))) {
-            GostDto result = RealmUtil.apply(nodeInfo.getInNode().getId(), forward);
+        if (isExternalEngine(engineOf(forward))) {
+            GostDto result = applyExternalRuntime(nodeInfo.getInNode().getId(), forward,
+                    buildServiceName(forward.getId(), forward.getUserId(), userTunnel));
             return isGostOperationSuccess(result) ? R.ok() : R.err(result.getMsg());
         }
         return createGostServices(forward, tunnel, limiter, nodeInfo, userTunnel);
@@ -1041,8 +1072,9 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
 
     private R updateRuntimeServices(Forward forward, Tunnel tunnel, Integer limiter,
                                     NodeInfo nodeInfo, UserTunnel userTunnel) {
-        if (ENGINE_REALM.equals(engineOf(forward))) {
-            GostDto result = RealmUtil.apply(nodeInfo.getInNode().getId(), forward);
+        if (isExternalEngine(engineOf(forward))) {
+            GostDto result = applyExternalRuntime(nodeInfo.getInNode().getId(), forward,
+                    buildServiceName(forward.getId(), forward.getUserId(), userTunnel));
             return isGostOperationSuccess(result) ? R.ok() : R.err(result.getMsg());
         }
         return updateGostServices(forward, tunnel, limiter, nodeInfo, userTunnel);
@@ -1050,8 +1082,8 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
 
     private R deleteRuntimeServices(Forward forward, Tunnel tunnel, NodeInfo nodeInfo,
                                     UserTunnel userTunnel) {
-        if (ENGINE_REALM.equals(engineOf(forward))) {
-            GostDto result = RealmUtil.delete(nodeInfo.getInNode().getId(), forward.getId());
+        if (isExternalEngine(engineOf(forward))) {
+            GostDto result = deleteExternalRuntime(nodeInfo.getInNode().getId(), forward);
             return isGostOperationSuccess(result) ? R.ok() : R.err(result.getMsg());
         }
         return deleteGostServices(forward, tunnel, nodeInfo, userTunnel);
@@ -1168,14 +1200,14 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
     }
 
     private R deleteOldRuntimeServices(Forward forward, Tunnel oldTunnel) {
-        if (!ENGINE_REALM.equals(engineOf(forward))) {
+        if (!isExternalEngine(engineOf(forward))) {
             return deleteOldGostServices(forward, oldTunnel);
         }
         Node inNode = nodeService.getNodeById(oldTunnel.getInNodeId());
         if (inNode == null) {
-            return R.err("原入口节点不存在，无法删除 Realm 配置");
+            return R.err("原入口节点不存在，无法删除转发工具配置");
         }
-        GostDto result = RealmUtil.delete(inNode.getId(), forward.getId());
+        GostDto result = deleteExternalRuntime(inNode.getId(), forward);
         return isGostOperationSuccess(result) ? R.ok() : R.err(result.getMsg());
     }
 

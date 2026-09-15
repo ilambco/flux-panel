@@ -2,6 +2,7 @@ package com.admin.common.task;
 
 import com.admin.common.utils.GostUtil;
 import com.admin.common.utils.RealmUtil;
+import com.admin.common.utils.ForwarderUtil;
 import com.admin.entity.Forward;
 import com.admin.entity.Tunnel;
 import com.admin.entity.User;
@@ -45,7 +46,7 @@ public class ResetFlowAsync {
      * 考虑当月是29、30天，但是选择是31的这种边界情况
      * 
      * 并发安全说明：
-     * - 使用setSql()进行原子SQL更新，只更新流量字段(in_flow, out_flow)
+     * - 使用setSql()进行原子SQL更新，只更新流量字段(in_flow, out_flow, used_flow)
      * - 不会影响DelayQueueManager的到期任务对status等其他字段的更新
      * - 避免了并发修改导致的数据覆盖问题
      */
@@ -120,7 +121,7 @@ public class ResetFlowAsync {
             for (User user : usersToReset) {
                 UpdateWrapper<User> updateWrapper = new UpdateWrapper<>();
                 updateWrapper.eq("id", user.getId())
-                           .setSql("in_flow = 0, out_flow = 0"); // 使用SQL原子操作，只更新流量字段
+                           .setSql("in_flow = 0, out_flow = 0, used_flow = 0");
                 
                 boolean success = userService.update(null, updateWrapper);
                 if (success) {
@@ -173,7 +174,7 @@ public class ResetFlowAsync {
             for (UserTunnel userTunnel : userTunnelsToReset) {
                 UpdateWrapper<UserTunnel> updateWrapper = new UpdateWrapper<>();
                 updateWrapper.eq("id", userTunnel.getId())
-                           .setSql("in_flow = 0, out_flow = 0"); // 使用SQL原子操作，只更新流量字段
+                           .setSql("in_flow = 0, out_flow = 0, used_flow = 0");
                 
                 boolean success = userTunnelService.update(null, updateWrapper);
                 if (success) {
@@ -232,12 +233,12 @@ public class ResetFlowAsync {
         Tunnel tunnel = tunnelService.getById(forward.getTunnelId());
         if (tunnel == null) return;
 
-        if ("realm".equalsIgnoreCase(forward.getEngine())) {
-            RealmUtil.pause(tunnel.getInNodeId(), forward.getId());
+        if (ForwarderUtil.isExternal(forward)) {
+            ForwarderUtil.pauseAny(tunnel.getInNodeId(), forward);
         } else {
             GostUtil.PauseService(tunnel.getInNodeId(), buildServiceName(forward.getId(), forward.getUserId(), userTunnelId));
         }
-        if (!"realm".equalsIgnoreCase(forward.getEngine()) && tunnel.getType() == 2){
+        if (!ForwarderUtil.isExternal(forward) && tunnel.getType() == 2){
             GostUtil.PauseRemoteService(tunnel.getOutNodeId(), buildServiceName(forward.getId(), forward.getUserId(), userTunnelId));
         }
     }

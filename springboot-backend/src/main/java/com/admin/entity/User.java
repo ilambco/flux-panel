@@ -55,6 +55,8 @@ public class User extends BaseEntity {
 
     private Long outFlow;
 
+    private Long usedFlow;
+
     private Integer num;
 
     private Long flowResetTime;

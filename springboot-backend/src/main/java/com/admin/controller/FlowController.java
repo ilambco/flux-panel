@@ -8,6 +8,8 @@ import com.admin.common.task.CheckGostConfigAsync;
 import com.admin.common.utils.AESCrypto;
 import com.admin.common.utils.GostUtil;
 import com.admin.common.utils.RealmUtil;
+import com.admin.common.utils.ForwarderUtil;
+import com.admin.common.utils.FlowBillingUtil;
 import com.admin.entity.*;
 import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
@@ -215,22 +217,31 @@ public class FlowController extends BaseController {
      */
     private String processFlowData(FlowDto flowDataList) {
         String[] serviceIds = parseServiceName(flowDataList.getN());
+        if (serviceIds.length != 3) {
+            log.warn("忽略格式无效的流量上报服务名: {}", flowDataList.getN());
+            return SUCCESS_RESPONSE;
+        }
         String forwardId = serviceIds[0];
         String userId = serviceIds[1];
         String userTunnelId = serviceIds[2];
 
         Forward forward = forwardService.getById(forwardId);
+        if (forward == null) {
+            log.warn("忽略已删除转发规则的流量上报: {}", flowDataList.getN());
+            return SUCCESS_RESPONSE;
+        }
 
         // 获取流量计费类型
         int flowType = getFlowType(forward);
 
-        //  处理流量倍率及单双向计算
+        // 应用流量倍率，但保留真实的入站、出站方向数据
         FlowDto flowStats = filterFlowData(flowDataList, forward, flowType);
+        long billedFlow = calculateBilledFlow(flowStats, flowType);
 
-        // 先更新所有流量统计 - 确保流量数据的一致性
-        updateForwardFlow(forwardId, flowStats);
-        updateUserFlow(userId, flowStats);
-        updateUserTunnelFlow(userTunnelId, flowStats);
+        // 同时记录方向流量和按当前计费模式得出的配额用量
+        updateForwardFlow(forwardId, flowStats, billedFlow);
+        updateUserFlow(userId, flowStats, billedFlow);
+        updateUserTunnelFlow(userTunnelId, flowStats, billedFlow);
 
         // 7. 检查和服务暂停操作
         String name = buildServiceName(forwardId, userId, userTunnelId);
@@ -250,7 +261,7 @@ public class FlowController extends BaseController {
 
         // 检查用户总流量限制
         long userFlowLimit = updatedUser.getFlow() * BYTES_TO_GB;
-        long userCurrentFlow = updatedUser.getInFlow() + updatedUser.getOutFlow();
+        long userCurrentFlow = defaultZero(updatedUser.getUsedFlow());
         if (userFlowLimit < userCurrentFlow) {
             pauseAllUserServices(userId, name);
             return;
@@ -277,7 +288,7 @@ public class FlowController extends BaseController {
 
         UserTunnel userTunnel = userTunnelService.getById(userTunnelId);
         if (userTunnel == null) return;
-        long flow = userTunnel.getInFlow() + userTunnel.getOutFlow();
+        long flow = defaultZero(userTunnel.getUsedFlow());
         if (flow >= userTunnel.getFlow() *  BYTES_TO_GB) {
             pauseSpecificForward(userTunnel.getTunnelId(), name, userId);
             return;
@@ -304,13 +315,18 @@ public class FlowController extends BaseController {
         for (Forward forward : forwardList) {
             Tunnel tunnel = tunnelService.getById(forward.getTunnelId());
             if (tunnel != null){
-                if ("realm".equalsIgnoreCase(forward.getEngine())) {
-                    RealmUtil.pause(tunnel.getInNodeId(), forward.getId());
+                UserTunnel relation = userTunnelService.getOne(new QueryWrapper<UserTunnel>()
+                        .eq("user_id", forward.getUserId())
+                        .eq("tunnel_id", forward.getTunnelId()));
+                String runtimeName = buildServiceName(String.valueOf(forward.getId()),
+                        String.valueOf(forward.getUserId()), relation == null ? DEFAULT_USER_TUNNEL_ID : String.valueOf(relation.getId()));
+                if (ForwarderUtil.isExternal(forward)) {
+                    ForwarderUtil.pauseAny(tunnel.getInNodeId(), forward);
                 } else {
-                    GostUtil.PauseService(tunnel.getInNodeId(), name);
+                    GostUtil.PauseService(tunnel.getInNodeId(), runtimeName);
                 }
-                if (!"realm".equalsIgnoreCase(forward.getEngine()) && tunnel.getType() == 2){
-                    GostUtil.PauseRemoteService(tunnel.getOutNodeId(), name);
+                if (!ForwarderUtil.isExternal(forward) && tunnel.getType() == 2){
+                    GostUtil.PauseRemoteService(tunnel.getOutNodeId(), runtimeName);
                 }
             }
             forward.setStatus(0);
@@ -322,19 +338,31 @@ public class FlowController extends BaseController {
         if (forward != null) {
             Tunnel tunnel = tunnelService.getById(forward.getTunnelId());
             if (tunnel != null) {
-                BigDecimal trafficRatio = tunnel.getTrafficRatio();
+                BigDecimal trafficRatio = tunnel.getTrafficRatio() == null ? BigDecimal.ONE : tunnel.getTrafficRatio();
 
-                BigDecimal originalD = BigDecimal.valueOf(flowDto.getD());
-                BigDecimal originalU = BigDecimal.valueOf(flowDto.getU());
+                BigDecimal originalD = BigDecimal.valueOf(Math.max(0L, flowDto.getD()));
+                BigDecimal originalU = BigDecimal.valueOf(Math.max(0L, flowDto.getU()));
 
                 BigDecimal newD = originalD.multiply(trafficRatio);
                 BigDecimal newU = originalU.multiply(trafficRatio);
 
-                flowDto.setD(newD.longValue() * flowType);
-                flowDto.setU(newU.longValue() * flowType);
+                flowDto.setD(newD.longValue());
+                flowDto.setU(newU.longValue());
             }
         }
         return flowDto;
+    }
+
+    /**
+     * 计费模式按每次节点上报窗口计算：1=仅出向，2=出入站合计，3=出入站取较大值。
+     * 节点成功上报后会清空本窗口计数，因此取最大值不会重复计算旧流量。
+     */
+    private long calculateBilledFlow(FlowDto flowStats, int flowType) {
+        return FlowBillingUtil.calculate(flowStats.getD(), flowStats.getU(), flowType);
+    }
+
+    private long defaultZero(Long value) {
+        return value == null ? 0L : value;
     }
 
     private int getFlowType(Forward forward) {
@@ -342,22 +370,24 @@ public class FlowController extends BaseController {
         if (forward == null) return defaultFlowType;
         Tunnel tunnel = tunnelService.getById(forward.getTunnelId());
         if (tunnel == null) return defaultFlowType;
-        return tunnel.getFlow();
+        Integer flow = tunnel.getFlow();
+        return flow != null && flow >= 1 && flow <= 3 ? flow : defaultFlowType;
     }
 
-    private void updateForwardFlow(String forwardId, FlowDto flowStats) {
+    private void updateForwardFlow(String forwardId, FlowDto flowStats, long billedFlow) {
         // 对相同转发的流量更新进行同步，避免并发覆盖
         synchronized (getForwardLock(forwardId)) {
             UpdateWrapper<Forward> updateWrapper = new UpdateWrapper<>();
             updateWrapper.eq("id", forwardId);
             updateWrapper.setSql("in_flow = in_flow + " + flowStats.getD());
             updateWrapper.setSql("out_flow = out_flow + " + flowStats.getU());
+            updateWrapper.setSql("used_flow = used_flow + " + billedFlow);
 
             forwardService.update(null, updateWrapper);
         }
     }
 
-    private void updateUserFlow(String userId, FlowDto flowStats) {
+    private void updateUserFlow(String userId, FlowDto flowStats, long billedFlow) {
         // 对相同用户的流量更新进行同步，避免并发覆盖
         synchronized (getUserLock(userId)) {
             UpdateWrapper<User> updateWrapper = new UpdateWrapper<>();
@@ -365,12 +395,13 @@ public class FlowController extends BaseController {
 
             updateWrapper.setSql("in_flow = in_flow + " + flowStats.getD());
             updateWrapper.setSql("out_flow = out_flow + " + flowStats.getU());
+            updateWrapper.setSql("used_flow = used_flow + " + billedFlow);
 
             userService.update(null, updateWrapper);
         }
     }
 
-    private void updateUserTunnelFlow(String userTunnelId, FlowDto flowStats) {
+    private void updateUserTunnelFlow(String userTunnelId, FlowDto flowStats, long billedFlow) {
         if (Objects.equals(userTunnelId, DEFAULT_USER_TUNNEL_ID)) {
             return; // 默认隧道不需要更新，返回成功
         }
@@ -381,6 +412,7 @@ public class FlowController extends BaseController {
             updateWrapper.eq("id", userTunnelId);
             updateWrapper.setSql("in_flow = in_flow + " + flowStats.getD());
             updateWrapper.setSql("out_flow = out_flow + " + flowStats.getU());
+            updateWrapper.setSql("used_flow = used_flow + " + billedFlow);
             userTunnelService.update(null, updateWrapper);
         }
     }

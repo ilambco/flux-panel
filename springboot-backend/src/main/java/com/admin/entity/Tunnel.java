@@ -50,7 +50,7 @@ public class Tunnel extends BaseEntity {
     private Integer type;
 
     /**
-     * 流量计算类型（1 单向计算上传。2 双向）
+     * 流量计算类型（1 仅出向，2 双向合计，3 双向取最大值）
      */
     private int flow;
 

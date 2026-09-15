@@ -884,6 +884,58 @@ UPDATE \`forward\`
 SET \`engine\` = 'gost'
 WHERE \`engine\` IS NULL OR \`engine\` = '';
 
+-- 独立保存按计费模式累计的流量；旧数据按原来的入站+出站用量迁移
+SET @needs_forward_used_flow = NOT EXISTS (
+  SELECT 1 FROM information_schema.COLUMNS
+  WHERE table_schema = DATABASE() AND table_name = 'forward' AND column_name = 'used_flow'
+);
+SET @sql = IF(
+  @needs_forward_used_flow,
+  'ALTER TABLE \`forward\` ADD COLUMN \`used_flow\` BIGINT(20) NOT NULL DEFAULT 0 COMMENT "按链路计费模式累计的流量" AFTER \`out_flow\`;',
+  'SELECT "Column \`used_flow\` already exists in \`forward\`";'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+SET @sql = IF(@needs_forward_used_flow, 'UPDATE \`forward\` SET \`used_flow\` = \`in_flow\` + \`out_flow\`;', 'SELECT 1;');
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @needs_user_used_flow = NOT EXISTS (
+  SELECT 1 FROM information_schema.COLUMNS
+  WHERE table_schema = DATABASE() AND table_name = 'user' AND column_name = 'used_flow'
+);
+SET @sql = IF(
+  @needs_user_used_flow,
+  'ALTER TABLE \`user\` ADD COLUMN \`used_flow\` BIGINT(20) NOT NULL DEFAULT 0 COMMENT "按链路计费模式累计的流量" AFTER \`out_flow\`;',
+  'SELECT "Column \`used_flow\` already exists in \`user\`";'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+SET @sql = IF(@needs_user_used_flow, 'UPDATE \`user\` SET \`used_flow\` = \`in_flow\` + \`out_flow\`;', 'SELECT 1;');
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @needs_user_tunnel_used_flow = NOT EXISTS (
+  SELECT 1 FROM information_schema.COLUMNS
+  WHERE table_schema = DATABASE() AND table_name = 'user_tunnel' AND column_name = 'used_flow'
+);
+SET @sql = IF(
+  @needs_user_tunnel_used_flow,
+  'ALTER TABLE \`user_tunnel\` ADD COLUMN \`used_flow\` BIGINT(20) NOT NULL DEFAULT 0 COMMENT "按链路计费模式累计的流量" AFTER \`out_flow\`;',
+  'SELECT "Column \`used_flow\` already exists in \`user_tunnel\`";'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+SET @sql = IF(@needs_user_tunnel_used_flow, 'UPDATE \`user_tunnel\` SET \`used_flow\` = \`in_flow\` + \`out_flow\`;', 'SELECT 1;');
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
 -- forward 表：添加 inx 字段（排序索引）
 SET @sql = (
   SELECT IF(

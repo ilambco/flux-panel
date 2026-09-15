@@ -194,7 +194,6 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
         this.updateById(existingTunnel);
         int err = 0;
         if (up != 0){
-            System.out.println("123123");
             List<Forward> tunnel = forwardService.list(new QueryWrapper<Forward>().eq("tunnel_id", tunnelUpdateDto.getId()));
             if (!tunnel.isEmpty()) {
                 for (Forward forward : tunnel) {

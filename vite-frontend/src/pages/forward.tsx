@@ -56,10 +56,11 @@ interface Forward {
   remoteAddr: string;
   interfaceName?: string;
   strategy: string;
-  engine?: 'gost' | 'realm';
+  engine?: ForwardEngine;
   status: number;
   inFlow: number;
   outFlow: number;
+  usedFlow?: number;
   serviceRunning: boolean;
   createdTime: string;
   userName?: string;
@@ -84,8 +85,10 @@ interface ForwardForm {
   remoteAddr: string;
   interfaceName?: string;
   strategy: string;
-  engine: 'gost' | 'realm';
+  engine: ForwardEngine;
 }
+
+type ForwardEngine = 'gost' | 'realm' | 'iptables' | 'nftables' | 'socat' | 'nginx';
 
 interface AddressItem {
   id: number;
@@ -436,12 +439,12 @@ export default function ForwardPage() {
       }
     }
 
-    if (form.engine === 'realm') {
+    if (form.engine !== 'gost') {
       const addressCount = form.remoteAddr.split('\n').map(addr => addr.trim()).filter(Boolean).length;
-      if (!isAdmin) newErrors.engine = 'Realm 当前仅供管理员自用';
-      if (selectedTunnel?.type !== 1) newErrors.engine = 'Realm 第一版仅支持单节点端口转发';
-      if (addressCount !== 1) newErrors.remoteAddr = 'Realm 第一版仅支持一个目标地址';
-      if (form.interfaceName?.trim()) newErrors.interfaceName = 'Realm 第一版暂不支持指定出口网卡或 IP';
+      if (!isAdmin) newErrors.engine = '外部转发工具当前仅供管理员自用';
+      if (selectedTunnel?.type !== 1) newErrors.engine = '外部转发工具仅支持单节点端口转发';
+      if (addressCount !== 1) newErrors.remoteAddr = '外部转发工具仅支持一个目标地址';
+      if (form.interfaceName?.trim()) newErrors.interfaceName = '外部转发工具暂不支持指定出口网卡或 IP';
     }
     
     setErrors(newErrors);
@@ -1621,28 +1624,32 @@ export default function ForwardPage() {
                         label="转发工具"
                         selectedKeys={[form.engine]}
                         onSelectionChange={(keys) => {
-                          const engine = Array.from(keys)[0] as 'gost' | 'realm';
+                          const engine = Array.from(keys)[0] as ForwardEngine;
                           if (engine) {
                             setForm(prev => ({
                               ...prev,
                               engine,
-                              interfaceName: engine === 'realm' ? '' : prev.interfaceName,
-                              strategy: engine === 'realm' ? 'fifo' : prev.strategy
+                              interfaceName: engine !== 'gost' ? '' : prev.interfaceName,
+                              strategy: engine !== 'gost' ? 'fifo' : prev.strategy
                             }));
                           }
                         }}
                         isInvalid={!!errors.engine}
                         errorMessage={errors.engine}
                         variant="bordered"
-                        description="GOST 支持原有完整功能；Realm 第一版用于轻量单机转发"
+                        description="GOST 支持多主机链路；其余工具用于单节点、单目标转发"
                       >
                         <SelectItem key="gost">GOST（默认）</SelectItem>
                         <SelectItem key="realm">Realm</SelectItem>
+                        <SelectItem key="iptables">iptables</SelectItem>
+                        <SelectItem key="nftables">nftables</SelectItem>
+                        <SelectItem key="socat">socat</SelectItem>
+                        <SelectItem key="nginx">Nginx Stream</SelectItem>
                       </Select>
                     )}
 
-                    {form.engine === 'realm' && (
-                      <Alert color="warning" variant="flat" title="Realm 当前支持 TCP + UDP、单节点和单目标；暂不统计单条规则流量，也不应用用户限速。" />
+                    {form.engine !== 'gost' && (
+                      <Alert color="warning" variant="flat" title="该工具支持 TCP + UDP、单节点和单目标；iptables/nftables 的目标地址需填写 IP。" />
                     )}
                     
                     <Input
@@ -1677,7 +1684,7 @@ export default function ForwardPage() {
                       maxRows={6}
                     />
                     
-                    {form.engine !== 'realm' && <Input
+                    {form.engine === 'gost' && <Input
                       label="出口网卡名或IP"
                       placeholder="请输入出口网卡名或IP"
                       value={form.interfaceName}

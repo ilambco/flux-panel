@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/go-gost/x/config"
+	"github.com/go-gost/x/forwarder"
 	"github.com/go-gost/x/internal/util/crypto"
 	"github.com/go-gost/x/realm"
 	"github.com/go-gost/x/service"
@@ -560,6 +561,10 @@ func (w *WebSocketReporter) routeCommand(cmd CommandMessage) {
 		err = w.handleRealm(cmd.Type, cmd.Data)
 		response.Type = cmd.Type + "Response"
 
+	case "ApplyForwarder", "PauseForwarder", "ResumeForwarder", "DeleteForwarder":
+		err = w.handleForwarder(cmd.Type, cmd.Data)
+		response.Type = cmd.Type + "Response"
+
 	default:
 		err = fmt.Errorf("未知命令类型: %s", cmd.Type)
 		response.Type = "UnknownCommandResponse"
@@ -590,6 +595,21 @@ func (w *WebSocketReporter) handleRealm(action string, data interface{}) error {
 	}
 	if err := realm.Default.Execute(action, request); err != nil {
 		return fmt.Errorf("Realm 操作失败: %v", err)
+	}
+	return nil
+}
+
+func (w *WebSocketReporter) handleForwarder(action string, data interface{}) error {
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("序列化转发工具配置失败: %v", err)
+	}
+	var request forwarder.Request
+	if err := json.Unmarshal(jsonData, &request); err != nil {
+		return fmt.Errorf("解析转发工具配置失败: %v", err)
+	}
+	if err := forwarder.Default.Execute(action, request); err != nil {
+		return fmt.Errorf("%s 操作失败: %v", request.Engine, err)
 	}
 	return nil
 }

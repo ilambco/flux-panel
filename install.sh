@@ -106,6 +106,38 @@ install_realm_runtime() {
   echo "✅ Realm $($REALM_INSTALL_DIR/realm --version 2>/dev/null | head -n 1) 已安装"
 }
 
+install_forwarder_tools() {
+  local distro=""
+  if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    distro="$ID"
+  fi
+  echo "📦 安装 nftables、iptables、socat 和 Nginx Stream..."
+  case "$distro" in
+    ubuntu|debian)
+      apt-get update >/dev/null || return 1
+      DEBIAN_FRONTEND=noninteractive apt-get install -y nftables iptables socat nginx libnginx-mod-stream >/dev/null || return 1
+      ;;
+    centos|rhel|rocky|almalinux|fedora)
+      if command -v dnf >/dev/null 2>&1; then
+        dnf install -y nftables iptables socat nginx >/dev/null || return 1
+      else
+        yum install -y nftables iptables socat nginx >/dev/null || return 1
+      fi
+      ;;
+    *)
+      echo "❌ 当前发行版暂不支持自动安装这些转发工具"
+      return 1
+      ;;
+  esac
+  install -d -m 0755 /etc/nginx/modules-enabled
+  cat >/etc/sysctl.d/99-flux-forwarding.conf <<'EOF'
+net.ipv4.ip_forward=1
+EOF
+  sysctl --system >/dev/null || return 1
+  command -v nft >/dev/null && command -v iptables >/dev/null && command -v socat >/dev/null && command -v nginx >/dev/null
+}
+
 restart_realm_services() {
   local unit
   while read -r unit; do
@@ -245,6 +277,10 @@ install_gost() {
 
     # 检查并安装 tcpkill
   check_and_install_tcpkill
+  if ! install_forwarder_tools; then
+    echo "❌ 转发工具安装失败，终止节点安装"
+    exit 1
+  fi
   
 
   mkdir -p "$INSTALL_DIR"
@@ -346,6 +382,10 @@ update_gost() {
   
   # 检查并安装 tcpkill
   check_and_install_tcpkill
+  if ! install_forwarder_tools; then
+    echo "❌ 转发工具更新失败，保留当前版本"
+    return 1
+  fi
   
   # 先下载新版本
   echo "⬇️ 下载最新版本..."
@@ -423,6 +463,20 @@ uninstall_gost() {
   done
   rm -rf "/var/lib/flux-panel/realm"
   rm -f "$REALM_INSTALL_DIR/realm"
+
+  for forwarder_unit in /etc/systemd/system/flux-iptables-*.service /etc/systemd/system/flux-nftables-*.service /etc/systemd/system/flux-socat-*.service /etc/systemd/system/flux-nginx-*.service; do
+    [[ -e "$forwarder_unit" ]] || continue
+    forwarder_name=$(basename "$forwarder_unit")
+    systemctl disable --now "$forwarder_name" 2>/dev/null || true
+    rm -f "$forwarder_unit"
+  done
+  for counter_meta in /var/lib/flux-panel/counters/*.json; do
+    [[ -e "$counter_meta" ]] || continue
+    counter_id=$(basename "$counter_meta" .json)
+    nft delete table inet "flux_count_${counter_id}" 2>/dev/null || true
+  done
+  rm -rf /var/lib/flux-panel/forwarder /var/lib/flux-panel/counters
+  rm -f /etc/sysctl.d/99-flux-forwarding.conf
 
   # 重载 systemd
   systemctl daemon-reload

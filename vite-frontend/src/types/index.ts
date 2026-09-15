@@ -18,6 +18,7 @@ export interface User {
   createdTime?: number; // 创建时间戳
   inFlow?: number; // 下载流量(字节)
   outFlow?: number; // 上传流量(字节)
+  usedFlow?: number; // 按计费模式累计的流量(字节)
 }
 
 export interface UserForm {
@@ -46,7 +47,8 @@ export interface UserTunnel {
   speedLimitName?: string; // 限速规则名称
   inFlow?: number; // 下载流量(字节)
   outFlow?: number; // 上传流量(字节)
-  tunnelFlow?: number; // 隧道流量计算类型(1-单向, 2-双向)
+  usedFlow?: number; // 按计费模式累计的流量(字节)
+  tunnelFlow?: number; // 1-仅出向, 2-双向合计, 3-双向取最大值
 }
 
 export interface UserTunnelForm {

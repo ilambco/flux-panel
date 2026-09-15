@@ -43,6 +43,7 @@ public class UserPackageDto {
         private Long flow;           // 总流量配额(GB)
         private Long inFlow;         // 已用入站流量(字节)
         private Long outFlow;        // 已用出站流量(字节)
+        private Long usedFlow;       // 按计费模式计算的已用流量(字节)
         private Integer num;         // 转发数量配额
         private Long expTime;        // 过期时间
         private Long flowResetTime;  // 流量重置时间
@@ -59,10 +60,11 @@ public class UserPackageDto {
         private Integer userId;
         private Integer tunnelId;
         private String tunnelName;
-        private Integer tunnelFlow;  // 隧道流量计算类型（1-单向，2-双向）
+        private Integer tunnelFlow;  // 1-仅出向，2-双向合计，3-双向取最大值
         private Long flow;           // 隧道流量配额(GB)
         private Long inFlow;         // 隧道已用入站流量(字节)
         private Long outFlow;        // 隧道已用出站流量(字节)
+        private Long usedFlow;       // 按计费模式计算的隧道已用流量(字节)
         private Integer num;         // 隧道转发数量配额
         private Long flowResetTime;  // 流量重置时间
         private Long expTime;        // 隧道权限过期时间
@@ -85,7 +87,8 @@ public class UserPackageDto {
         private String remoteAddr;
         private Long inFlow;         // 转发入站流量(字节)
         private Long outFlow;        // 转发出站流量(字节)
+        private Long usedFlow;       // 按计费模式计算的转发已用流量(字节)
         private Integer status;
         private Long createdTime;
     }
-} 
+}

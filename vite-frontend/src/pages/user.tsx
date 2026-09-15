@@ -91,15 +91,11 @@ const getUserStatus = (user: User) => {
 };
 
 const calculateUserTotalUsedFlow = (user: User): number => {
-  return (user.inFlow || 0) + (user.outFlow || 0);
+  return user.usedFlow ?? ((user.inFlow || 0) + (user.outFlow || 0));
 };
 
 const calculateTunnelUsedFlow = (tunnel: UserTunnel): number => {
-  const inFlow = tunnel.inFlow || 0;
-  const outFlow = tunnel.outFlow || 0;
-  
-  // 后端已按计费类型处理流量，前端直接使用入站+出站总和
-  return inFlow + outFlow;
+  return tunnel.usedFlow ?? ((tunnel.inFlow || 0) + (tunnel.outFlow || 0));
 };
 
 export default function UserPage() {
@@ -1450,4 +1446,4 @@ export default function UserPage() {
       </div>
     
   );
-} 
+}

@@ -77,6 +77,7 @@ func (p *program) Start() error {
 	go func() {
 		select {
 		case <-time.After(10 * time.Second):
+			go xservice.StartExternalTrafficReporter(ctx)
 			xservice.StartConfigReporter(ctx)
 		case <-ctx.Done():
 			return

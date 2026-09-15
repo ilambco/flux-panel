@@ -32,7 +32,7 @@ interface Tunnel {
   tcpListenAddr: string;
   udpListenAddr: string;
   interfaceName?: string;
-  flow: number; // 1: 单向, 2: 双向
+  flow: number; // 1: 仅出向, 2: 双向合计, 3: 双向取最大值
   trafficRatio: number;
   status: number;
   createdTime: string;
@@ -389,9 +389,11 @@ export default function TunnelPage() {
   const getFlowDisplay = (flow: number) => {
     switch (flow) {
       case 1:
-        return '单向计算';
+        return '仅出向';
       case 2:
-        return '双向计算';
+        return '双向合计';
+      case 3:
+        return '双向取最大值';
       default:
         return '未知';
     }
@@ -666,8 +668,9 @@ export default function TunnelPage() {
                         errorMessage={errors.flow}
                         variant="bordered"
                       >
-                        <SelectItem key="1">单向计算（仅上传）</SelectItem>
-                        <SelectItem key="2">双向计算（上传+下载）</SelectItem>
+                        <SelectItem key="1">仅出向（只计算出站）</SelectItem>
+                        <SelectItem key="2">双向合计（出站+入站）</SelectItem>
+                        <SelectItem key="3">双向取最大值</SelectItem>
                       </Select>
 
                       <Input
@@ -1052,4 +1055,4 @@ export default function TunnelPage() {
       </div>
     
   );
-} 
+}

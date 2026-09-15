@@ -36,12 +36,15 @@ public class Forward extends BaseEntity{
 
     private String strategy;
 
-    /** Runtime used by this rule: gost (legacy/default) or realm. */
+    /** Runtime used by this rule: gost, realm, iptables, nftables, socat or nginx. */
     private String engine;
 
     private Long inFlow;
 
     private Long outFlow;
+
+    /** Traffic charged against the quota after applying the tunnel billing mode. */
+    private Long usedFlow;
 
     private Integer inx;
 

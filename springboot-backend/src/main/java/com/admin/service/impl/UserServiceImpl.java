@@ -10,6 +10,7 @@ import com.admin.common.utils.GostUtil;
 import com.admin.common.utils.JwtUtil;
 import com.admin.common.utils.Md5Util;
 import com.admin.common.utils.RealmUtil;
+import com.admin.common.utils.ForwarderUtil;
 import com.admin.entity.*;
 import com.admin.mapper.ForwardMapper;
 import com.admin.mapper.UserMapper;
@@ -351,12 +352,14 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
             if (user == null) return R.err(ERROR_USER_NOT_FOUND);
             user.setInFlow(0L);
             user.setOutFlow(0L);
+            user.setUsedFlow(0L);
             this.updateById(user);
         }else { // 清零隧道流量
             UserTunnel tunnel = userTunnelService.getById(resetFlowDto.getId());
             if (tunnel == null) return R.err("隧道不存在");
             tunnel.setInFlow(0L);
             tunnel.setOutFlow(0L);
+            tunnel.setUsedFlow(0L);
             userTunnelService.updateById(tunnel);
         }
         return R.ok();
@@ -569,8 +572,8 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         Node inNode = nodeService.getNodeById(tunnel.getInNodeId());
         if (inNode == null) return;
 
-        if ("realm".equalsIgnoreCase(forward.getEngine())) {
-            RealmUtil.delete(inNode.getId(), forward.getId());
+        if (ForwarderUtil.isExternal(forward)) {
+            ForwarderUtil.deleteAny(inNode.getId(), forward);
             return;
         }
 
@@ -708,6 +711,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         userInfo.setFlow(user.getFlow());
         userInfo.setInFlow(user.getInFlow());
         userInfo.setOutFlow(user.getOutFlow());
+        userInfo.setUsedFlow(user.getUsedFlow());
         userInfo.setNum(user.getNum());
         userInfo.setExpTime(user.getExpTime());
         userInfo.setFlowResetTime(user.getFlowResetTime());

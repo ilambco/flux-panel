@@ -54,8 +54,8 @@ public class OpenApiController extends BaseController {
 
         if ("-1".equals(tunnel)) {
             headerValue = buildSubscriptionHeader(
-                    userInfo.getOutFlow(),
-                    userInfo.getInFlow(),
+                    defaultZero(userInfo.getUsedFlow()),
+                    0,
                     userInfo.getFlow() * GIGA,
                     userInfo.getExpTime() / 1000
             );
@@ -64,8 +64,8 @@ public class OpenApiController extends BaseController {
             if (tunnelInfo == null) return R.err("隧道不存在");
             if (!tunnelInfo.getUserId().toString().equals(userInfo.getId().toString())) return R.err("隧道不存在");
             headerValue = buildSubscriptionHeader(
-                    tunnelInfo.getOutFlow(),
-                    tunnelInfo.getInFlow(),
+                    defaultZero(tunnelInfo.getUsedFlow()),
+                    0,
                     tunnelInfo.getFlow() * GIGA,
                     tunnelInfo.getExpTime() / 1000
             );
@@ -78,7 +78,11 @@ public class OpenApiController extends BaseController {
 
 
     private String buildSubscriptionHeader(long upload, long download, long total, long expire) {
-        return String.format("upload=%d; download=%d; total=%d; expire=%d", download, upload, total, expire);
+        return String.format("upload=%d; download=%d; total=%d; expire=%d", upload, download, total, expire);
+    }
+
+    private long defaultZero(Long value) {
+        return value == null ? 0L : value;
     }
 
 

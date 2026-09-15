@@ -21,6 +21,8 @@ public class TunnelUpdateDto {
     private String name;
     
     @NotNull(message = "流量计算类型不能为空")
+    @Min(value = 1, message = "流量计算类型必须为1、2或3")
+    @Max(value = 3, message = "流量计算类型必须为1、2或3")
     private Integer flow;
     
     // 流量倍率
@@ -41,4 +43,4 @@ public class TunnelUpdateDto {
 
     @TableField(updateStrategy = FieldStrategy.IGNORED)
     private String interfaceName;
-} 
+}
