@@ -7,6 +7,7 @@ import com.admin.common.lang.R;
 import com.admin.common.task.CheckGostConfigAsync;
 import com.admin.common.utils.AESCrypto;
 import com.admin.common.utils.GostUtil;
+import com.admin.common.utils.RealmUtil;
 import com.admin.entity.*;
 import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
@@ -303,8 +304,12 @@ public class FlowController extends BaseController {
         for (Forward forward : forwardList) {
             Tunnel tunnel = tunnelService.getById(forward.getTunnelId());
             if (tunnel != null){
-                GostUtil.PauseService(tunnel.getInNodeId(), name);
-                if (tunnel.getType() == 2){
+                if ("realm".equalsIgnoreCase(forward.getEngine())) {
+                    RealmUtil.pause(tunnel.getInNodeId(), forward.getId());
+                } else {
+                    GostUtil.PauseService(tunnel.getInNodeId(), name);
+                }
+                if (!"realm".equalsIgnoreCase(forward.getEngine()) && tunnel.getType() == 2){
                     GostUtil.PauseRemoteService(tunnel.getOutNodeId(), name);
                 }
             }

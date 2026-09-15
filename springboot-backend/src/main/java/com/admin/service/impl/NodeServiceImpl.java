@@ -360,21 +360,29 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
         ViteConfig viteConfig = viteConfigService.getOne(new QueryWrapper<ViteConfig>().eq("name", "ip"));
         if (viteConfig == null) return R.err("请先前往网站配置中设置ip");
 
+        String channel = getReleaseChannel();
         StringBuilder command = new StringBuilder();
-        
-        // 第一部分：下载安装脚本  
-        command.append("curl -L https://github.com/bqlpfy/flux-panel/releases/download/1.4.3/install.sh")
+
+        // 第一部分：下载安装脚本
+        command.append("curl --fail --location https://github.com/ilambco/flux-panel/releases/download/channel-")
+               .append(channel)
+               .append("/install.sh")
                .append(" -o ./install.sh && chmod +x ./install.sh && ");
         
         // 处理服务器地址，如果是IPv6需要添加方括号
         String processedServerAddr = processServerAddress(viteConfig.getValue());
         
         // 第二部分：执行安装脚本（去掉-u参数）
-        command.append("./install.sh")
+        command.append("FLUX_CHANNEL=").append(channel).append(" ./install.sh")
                .append(" -a ").append(processedServerAddr)  // 服务器地址
                .append(" -s ").append(node.getSecret());    // 节点密钥
         
         return R.ok(command.toString());
+    }
+
+    private String getReleaseChannel() {
+        String channel = System.getenv("FLUX_CHANNEL");
+        return "develop".equals(channel) ? "develop" : "main";
     }
 
     /**

@@ -7,6 +7,7 @@ import com.admin.common.dto.GostDto;
 import com.admin.common.lang.R;
 import com.admin.common.utils.GostUtil;
 import com.admin.common.utils.JwtUtil;
+import com.admin.common.utils.RealmUtil;
 import com.admin.common.utils.WebSocketServer;
 import com.admin.entity.*;
 import com.admin.mapper.ForwardMapper;
@@ -20,6 +21,7 @@ import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
+import org.apache.commons.lang3.StringUtils;
 
 import javax.annotation.Resource;
 import java.util.*;
@@ -47,6 +49,8 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
     private static final int FORWARD_STATUS_PAUSED = 0;
     private static final int FORWARD_STATUS_ERROR = -1;
     private static final int TUNNEL_STATUS_ACTIVE = 1;
+    private static final String ENGINE_GOST = "gost";
+    private static final String ENGINE_REALM = "realm";
 
     private static final long BYTES_TO_GB = 1024L * 1024L * 1024L;
 
@@ -77,6 +81,12 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         if (tunnel.getStatus() != TUNNEL_STATUS_ACTIVE) {
             return R.err("隧道已禁用，无法创建转发");
         }
+        forwardDto.setEngine(normalizeEngine(forwardDto.getEngine()));
+        R engineValidation = validateEngineRequest(currentUser, tunnel, forwardDto.getEngine(),
+                forwardDto.getRemoteAddr(), forwardDto.getInterfaceName(), forwardDto.getStrategy());
+        if (engineValidation.getCode() != 0) {
+            return engineValidation;
+        }
 
         // 3. 普通用户权限和限制检查
         UserPermissionResult permissionResult = checkUserPermissions(currentUser, tunnel, null);
@@ -104,7 +114,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         }
 
         // 7. 调用Gost服务创建转发
-        R gostResult = createGostServices(forward, tunnel, permissionResult.getLimiter(), nodeInfo, permissionResult.getUserTunnel());
+        R gostResult = createRuntimeServices(forward, tunnel, permissionResult.getLimiter(), nodeInfo, permissionResult.getUserTunnel());
 
         if (gostResult.getCode() != 0) {
             this.removeById(forward.getId());
@@ -153,10 +163,17 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         if (tunnel.getStatus() != TUNNEL_STATUS_ACTIVE) {
             return R.err("隧道已禁用，无法更新转发");
         }
+        forwardUpdateDto.setEngine(normalizeEngine(forwardUpdateDto.getEngine()));
+        R engineValidation = validateEngineRequest(currentUser, tunnel, forwardUpdateDto.getEngine(),
+                forwardUpdateDto.getRemoteAddr(), forwardUpdateDto.getInterfaceName(), forwardUpdateDto.getStrategy());
+        if (engineValidation.getCode() != 0) {
+            return engineValidation;
+        }
         boolean tunnelChanged = isTunnelChanged(existForward, forwardUpdateDto);
+        boolean engineChanged = !engineOf(existForward).equals(forwardUpdateDto.getEngine());
         // 4. 检查权限和限制
         UserPermissionResult permissionResult = null;
-        if (tunnelChanged) {
+        if (tunnelChanged || engineChanged) {
             if (currentUser.getRoleId() == ADMIN_ROLE_ID) {
                 // 管理员操作自己的转发时，不需要检查权限限制
                 if (Objects.equals(currentUser.getUserId(), existForward.getUserId())) {
@@ -225,12 +242,12 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
 
         // 8. 调用Gost服务更新转发
         R gostResult;
-        if (tunnelChanged) {
-            // 隧道变化时：先删除原配置，再创建新配置
-            gostResult = updateGostServicesWithTunnelChange(existForward, updatedForward, tunnel, permissionResult != null ? permissionResult.getLimiter() : null, nodeInfo, userTunnel);
+        if (tunnelChanged || engineChanged) {
+            // 隧道或运行时变化时：先删除原配置，再创建新配置
+            gostResult = updateRuntimeServicesWithChange(existForward, updatedForward, tunnel, permissionResult != null ? permissionResult.getLimiter() : null, nodeInfo, userTunnel);
         } else {
             // 隧道未变化时：直接更新配置
-            gostResult = updateGostServices(updatedForward, tunnel, permissionResult != null ? permissionResult.getLimiter() : null, nodeInfo, userTunnel);
+            gostResult = updateRuntimeServices(updatedForward, tunnel, permissionResult != null ? permissionResult.getLimiter() : null, nodeInfo, userTunnel);
         }
 
         if (gostResult.getCode() != 0) {
@@ -278,7 +295,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         }
 
         // 6. 调用Gost服务删除转发
-        R gostResult = deleteGostServices(forward, tunnel, nodeInfo, userTunnel);
+        R gostResult = deleteRuntimeServices(forward, tunnel, nodeInfo, userTunnel);
         if (gostResult.getCode() != 0) {
             return gostResult;
         }
@@ -393,11 +410,15 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
             return R.err(nodeInfo.getErrorMessage());
         }
 
-        // 8. 调用Gost服务
+        // 8. 调用所选转发运行时
         String serviceName = buildServiceName(forward.getId(), forward.getUserId(), userTunnel);
         GostDto gostResult;
 
-        if ("PauseService".equals(gostMethod)) {
+        if (ENGINE_REALM.equals(engineOf(forward))) {
+            gostResult = "PauseService".equals(gostMethod)
+                    ? RealmUtil.pause(nodeInfo.getInNode().getId(), forward.getId())
+                    : RealmUtil.resume(nodeInfo.getInNode().getId(), forward.getId());
+        } else if ("PauseService".equals(gostMethod)) {
             gostResult = GostUtil.PauseService(nodeInfo.getInNode().getId(), serviceName);
 
             // 隧道转发需要同时暂停远端服务
@@ -975,6 +996,67 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         return forward;
     }
 
+    private String normalizeEngine(String engine) {
+        return engine == null || engine.trim().isEmpty() ? ENGINE_GOST : engine.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private String engineOf(Forward forward) {
+        return normalizeEngine(forward.getEngine());
+    }
+
+    private R validateEngineRequest(UserInfo user, Tunnel tunnel, String engine, String remoteAddr,
+                                    String interfaceName, String strategy) {
+        if (!ENGINE_GOST.equals(engine) && !ENGINE_REALM.equals(engine)) {
+            return R.err("不支持的转发工具");
+        }
+        if (!ENGINE_REALM.equals(engine)) {
+            return R.ok();
+        }
+        if (user.getRoleId() != ADMIN_ROLE_ID) {
+            return R.err("Realm 当前仅供管理员自用");
+        }
+        if (tunnel.getType() != TUNNEL_TYPE_PORT_FORWARD) {
+            return R.err("Realm 第一版仅支持单节点端口转发");
+        }
+        if (remoteAddr == null || remoteAddr.contains(",")) {
+            return R.err("Realm 第一版仅支持一个目标地址");
+        }
+        if (StringUtils.isNotBlank(interfaceName)) {
+            return R.err("Realm 第一版暂不支持指定出口网卡或 IP");
+        }
+        if (StringUtils.isNotBlank(strategy) && !"fifo".equals(strategy)) {
+            return R.err("Realm 第一版暂不支持负载策略");
+        }
+        return R.ok();
+    }
+
+    private R createRuntimeServices(Forward forward, Tunnel tunnel, Integer limiter,
+                                    NodeInfo nodeInfo, UserTunnel userTunnel) {
+        if (ENGINE_REALM.equals(engineOf(forward))) {
+            GostDto result = RealmUtil.apply(nodeInfo.getInNode().getId(), forward);
+            return isGostOperationSuccess(result) ? R.ok() : R.err(result.getMsg());
+        }
+        return createGostServices(forward, tunnel, limiter, nodeInfo, userTunnel);
+    }
+
+    private R updateRuntimeServices(Forward forward, Tunnel tunnel, Integer limiter,
+                                    NodeInfo nodeInfo, UserTunnel userTunnel) {
+        if (ENGINE_REALM.equals(engineOf(forward))) {
+            GostDto result = RealmUtil.apply(nodeInfo.getInNode().getId(), forward);
+            return isGostOperationSuccess(result) ? R.ok() : R.err(result.getMsg());
+        }
+        return updateGostServices(forward, tunnel, limiter, nodeInfo, userTunnel);
+    }
+
+    private R deleteRuntimeServices(Forward forward, Tunnel tunnel, NodeInfo nodeInfo,
+                                    UserTunnel userTunnel) {
+        if (ENGINE_REALM.equals(engineOf(forward))) {
+            GostDto result = RealmUtil.delete(nodeInfo.getInNode().getId(), forward.getId());
+            return isGostOperationSuccess(result) ? R.ok() : R.err(result.getMsg());
+        }
+        return deleteGostServices(forward, tunnel, nodeInfo, userTunnel);
+    }
+
     /**
      * 创建Gost服务
      */
@@ -1051,30 +1133,50 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
     }
 
     /**
-     * 隧道变化时更新Gost服务：先删除原配置，再创建新配置
+     * 隧道或运行时变化时，删除旧配置并创建新配置。创建失败时恢复旧配置。
      */
-    private R updateGostServicesWithTunnelChange(Forward existForward, Forward updatedForward, Tunnel newTunnel, Integer limiter, NodeInfo nodeInfo, UserTunnel userTunnel) {
+    private R updateRuntimeServicesWithChange(Forward existForward, Forward updatedForward, Tunnel newTunnel, Integer limiter, NodeInfo nodeInfo, UserTunnel userTunnel) {
         // 1. 获取原隧道信息
         Tunnel oldTunnel = tunnelService.getById(existForward.getTunnelId());
         if (oldTunnel == null) {
             return R.err("原隧道不存在，无法删除旧配置");
         }
 
-        // 2. 删除原有的Gost服务配置
-        R deleteResult = deleteOldGostServices(existForward, oldTunnel);
+        // 2. 删除原有运行时配置
+        R deleteResult = deleteOldRuntimeServices(existForward, oldTunnel);
         if (deleteResult.getCode() != 0) {
-            // 删除失败时记录日志，但不影响后续创建（可能原配置已不存在）
-            log.info("删除原隧道{}的Gost配置失败: {}", oldTunnel.getId(), deleteResult.getMsg());
+            return R.err("删除原运行时配置失败: " + deleteResult.getMsg());
         }
 
-        // 3. 创建新的Gost服务配置
-        R createResult = createGostServices(updatedForward, newTunnel, limiter, nodeInfo, userTunnel);
+        // 3. 创建新的运行时配置
+        R createResult = createRuntimeServices(updatedForward, newTunnel, limiter, nodeInfo, userTunnel);
         if (createResult.getCode() != 0) {
-            updateForwardStatusToError(updatedForward);
-            return R.err("创建新隧道配置失败: " + createResult.getMsg());
+            UserTunnel oldUserTunnel = getUserTunnel(existForward.getUserId(), oldTunnel.getId().intValue());
+            NodeInfo oldNodeInfo = getRequiredNodes(oldTunnel);
+            Integer oldLimiter = oldUserTunnel == null ? null : oldUserTunnel.getSpeedId();
+            R restoreResult = oldNodeInfo.isHasError()
+                    ? R.err(oldNodeInfo.getErrorMessage())
+                    : createRuntimeServices(existForward, oldTunnel, oldLimiter, oldNodeInfo, oldUserTunnel);
+            if (restoreResult.getCode() != 0) {
+                return R.err("创建新运行时配置失败: " + createResult.getMsg()
+                        + "；恢复旧配置也失败: " + restoreResult.getMsg());
+            }
+            return R.err("创建新运行时配置失败: " + createResult.getMsg() + "；旧配置已恢复");
         }
 
         return R.ok();
+    }
+
+    private R deleteOldRuntimeServices(Forward forward, Tunnel oldTunnel) {
+        if (!ENGINE_REALM.equals(engineOf(forward))) {
+            return deleteOldGostServices(forward, oldTunnel);
+        }
+        Node inNode = nodeService.getNodeById(oldTunnel.getInNodeId());
+        if (inNode == null) {
+            return R.err("原入口节点不存在，无法删除 Realm 配置");
+        }
+        GostDto result = RealmUtil.delete(inNode.getId(), forward.getId());
+        return isGostOperationSuccess(result) ? R.ok() : R.err(result.getMsg());
     }
 
     /**
@@ -1398,7 +1500,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         } else {
             limiter = userTunnel.getSpeedId();
         }
-        updateGostServices(forward, tunnel, limiter, nodeInfo, userTunnel);
+        updateRuntimeServices(forward, tunnel, limiter, nodeInfo, userTunnel);
     }
 
 

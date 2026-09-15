@@ -11,6 +11,7 @@ RUN npm run build
 
 # 生产阶段
 FROM nginx:stable-alpine AS production-stage
+LABEL org.opencontainers.image.source="https://github.com/ilambco/flux-panel"
 
 COPY nginx.conf /etc/nginx/nginx.conf
 
@@ -18,4 +19,4 @@ COPY --from=builder /app/dist /usr/share/nginx/html
 
 EXPOSE 80
 
-CMD ["nginx", "-g", "daemon off;"] 
+CMD ["nginx", "-g", "daemon off;"]

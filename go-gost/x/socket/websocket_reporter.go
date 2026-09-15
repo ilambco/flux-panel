@@ -15,6 +15,7 @@ import (
 
 	"github.com/go-gost/x/config"
 	"github.com/go-gost/x/internal/util/crypto"
+	"github.com/go-gost/x/realm"
 	"github.com/go-gost/x/service"
 	"github.com/gorilla/websocket"
 	"github.com/shirou/gopsutil/v3/cpu"
@@ -553,6 +554,12 @@ func (w *WebSocketReporter) routeCommand(cmd CommandMessage) {
 		err = w.handleSetProtocol(cmd.Data)
 		response.Type = "SetProtocolResponse"
 
+	// Realm rules are isolated systemd services. The action name is allow-listed
+	// here and the manager never executes a shell command.
+	case "ApplyRealm", "PauseRealm", "ResumeRealm", "DeleteRealm":
+		err = w.handleRealm(cmd.Type, cmd.Data)
+		response.Type = cmd.Type + "Response"
+
 	default:
 		err = fmt.Errorf("未知命令类型: %s", cmd.Type)
 		response.Type = "UnknownCommandResponse"
@@ -570,6 +577,21 @@ func (w *WebSocketReporter) routeCommand(cmd CommandMessage) {
 	}
 
 	w.sendResponse(response)
+}
+
+func (w *WebSocketReporter) handleRealm(action string, data interface{}) error {
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("序列化 Realm 配置失败: %v", err)
+	}
+	var request realm.Request
+	if err := json.Unmarshal(jsonData, &request); err != nil {
+		return fmt.Errorf("解析 Realm 配置失败: %v", err)
+	}
+	if err := realm.Default.Execute(action, request); err != nil {
+		return fmt.Errorf("Realm 操作失败: %v", err)
+	}
+	return nil
 }
 
 // Service 命令处理函数

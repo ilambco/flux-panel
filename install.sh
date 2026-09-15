@@ -19,17 +19,100 @@ get_architecture() {
 # 构建下载地址
 build_download_url() {
     local ARCH=$(get_architecture)
-    echo "https://github.com/bqlpfy/flux-panel/releases/download/1.4.3/gost-${ARCH}"
+    echo "https://github.com/${FLUX_REPOSITORY}/releases/download/channel-${FLUX_CHANNEL}/gost-${ARCH}"
 }
 
 # 下载地址
+FLUX_REPOSITORY="${FLUX_REPOSITORY:-ilambco/flux-panel}"
+FLUX_CHANNEL="${FLUX_CHANNEL:-main}"
+if [[ "$FLUX_CHANNEL" != "main" && "$FLUX_CHANNEL" != "develop" ]]; then
+  echo "❌ FLUX_CHANNEL 仅支持 main 或 develop"
+  exit 1
+fi
 DOWNLOAD_URL=$(build_download_url)
+CHECKSUM_URL="https://github.com/${FLUX_REPOSITORY}/releases/download/channel-${FLUX_CHANNEL}/SHA256SUMS"
 INSTALL_DIR="/etc/gost"
-COUNTRY=$(curl -s https://ipinfo.io/country)
+REALM_VERSION="v2.9.6"
+REALM_INSTALL_DIR="/usr/local/lib/flux-panel"
+COUNTRY=$(curl -s https://ipinfo.io/country || true)
 if [ "$COUNTRY" = "CN" ]; then
     # 拼接 URL
     DOWNLOAD_URL="https://ghfast.top/${DOWNLOAD_URL}"
+    CHECKSUM_URL="https://ghfast.top/${CHECKSUM_URL}"
 fi
+
+download_gost_binary() {
+  local destination="$1" asset temp_dir
+  asset="gost-$(get_architecture)"
+  temp_dir=$(mktemp -d) || return 1
+
+  if ! curl --fail --location --retry 3 "$DOWNLOAD_URL" -o "$temp_dir/$asset" ||
+     ! curl --fail --location --retry 3 "$CHECKSUM_URL" -o "$temp_dir/SHA256SUMS"; then
+    rm -rf "$temp_dir"
+    return 1
+  fi
+  if ! (cd "$temp_dir" && grep "  ${asset}$" SHA256SUMS | sha256sum --check --status); then
+    echo "❌ GOST 文件校验失败，已拒绝安装"
+    rm -rf "$temp_dir"
+    return 1
+  fi
+  install -m 0755 "$temp_dir/$asset" "$destination"
+  rm -rf "$temp_dir"
+}
+
+# 安装固定版本的官方 Realm 静态二进制，并校验 GitHub Release 摘要。
+install_realm_runtime() {
+  local realm_asset realm_sha realm_tmp realm_url
+  case "$(uname -m)" in
+    x86_64|amd64)
+      realm_asset="realm-x86_64-unknown-linux-musl.tar.gz"
+      realm_sha="b1cc335547bea8bb2a88178bef12ec7f2363e36200e7ea1d4e1e67627929bf65"
+      ;;
+    aarch64|arm64)
+      realm_asset="realm-aarch64-unknown-linux-musl.tar.gz"
+      realm_sha="f4c0318dd86854da483dcb7645b4f39cae2cc3f91c688fef969d53220b949488"
+      ;;
+    *)
+      echo "❌ Realm 暂不支持当前架构: $(uname -m)"
+      return 1
+      ;;
+  esac
+
+  realm_tmp=$(mktemp -d) || return 1
+  realm_url="https://github.com/zhboner/realm/releases/download/${REALM_VERSION}/${realm_asset}"
+  if [ "$COUNTRY" = "CN" ]; then
+    realm_url="https://ghfast.top/${realm_url}"
+  fi
+
+  echo "⬇️ 下载并校验 Realm ${REALM_VERSION}..."
+  if ! curl --fail --location --retry 3 "$realm_url" -o "$realm_tmp/$realm_asset"; then
+    rm -rf "$realm_tmp"
+    return 1
+  fi
+  if ! printf '%s  %s\n' "$realm_sha" "$realm_tmp/$realm_asset" | sha256sum --check --status; then
+    echo "❌ Realm 文件校验失败，已拒绝安装"
+    rm -rf "$realm_tmp"
+    return 1
+  fi
+  if ! tar -xzf "$realm_tmp/$realm_asset" -C "$realm_tmp" || [ ! -f "$realm_tmp/realm" ]; then
+    echo "❌ Realm 解压失败"
+    rm -rf "$realm_tmp"
+    return 1
+  fi
+  install -d -m 0755 "$REALM_INSTALL_DIR"
+  install -m 0755 "$realm_tmp/realm" "$REALM_INSTALL_DIR/realm.new"
+  mv -f "$REALM_INSTALL_DIR/realm.new" "$REALM_INSTALL_DIR/realm"
+  rm -rf "$realm_tmp"
+  echo "✅ Realm $($REALM_INSTALL_DIR/realm --version 2>/dev/null | head -n 1) 已安装"
+}
+
+restart_realm_services() {
+  local unit
+  while read -r unit; do
+    [ -z "$unit" ] && continue
+    systemctl try-restart "$unit" || return 1
+  done < <(systemctl list-unit-files 'flux-realm-*.service' --no-legend 2>/dev/null | awk '{print $1}')
+}
 
 
 
@@ -152,6 +235,8 @@ while getopts "a:s:" opt; do
     *) echo "❌ 无效参数"; exit 1 ;;
   esac
 done
+shift $((OPTIND - 1))
+CLI_ACTION="${1:-}"
 
 # 安装功能
 install_gost() {
@@ -176,13 +261,17 @@ install_gost() {
 
   # 下载 gost
   echo "⬇️ 下载 gost 中..."
-  curl -L "$DOWNLOAD_URL" -o "$INSTALL_DIR/gost"
-  if [[ ! -f "$INSTALL_DIR/gost" || ! -s "$INSTALL_DIR/gost" ]]; then
+  if ! download_gost_binary "$INSTALL_DIR/gost"; then
     echo "❌ 下载失败，请检查网络或下载链接。"
     exit 1
   fi
   chmod +x "$INSTALL_DIR/gost"
   echo "✅ 下载完成"
+
+  if ! install_realm_runtime; then
+    echo "❌ Realm 运行时安装失败，终止节点安装"
+    exit 1
+  fi
 
   # 打印版本
   echo "🔎 gost 版本：$($INSTALL_DIR/gost -V)"
@@ -260,9 +349,19 @@ update_gost() {
   
   # 先下载新版本
   echo "⬇️ 下载最新版本..."
-  curl -L "$DOWNLOAD_URL" -o "$INSTALL_DIR/gost.new"
-  if [[ ! -f "$INSTALL_DIR/gost.new" || ! -s "$INSTALL_DIR/gost.new" ]]; then
+  if ! download_gost_binary "$INSTALL_DIR/gost.new"; then
     echo "❌ 下载失败。"
+    return 1
+  fi
+
+  if ! install_realm_runtime; then
+    echo "❌ Realm 运行时更新失败，保留当前 GOST 版本"
+    rm -f "$INSTALL_DIR/gost.new"
+    return 1
+  fi
+  if ! restart_realm_services; then
+    echo "❌ Realm 服务重启失败，请检查 systemctl status flux-realm-<规则ID>.service"
+    rm -f "$INSTALL_DIR/gost.new"
     return 1
   fi
 
@@ -315,6 +414,16 @@ uninstall_gost() {
     echo "🧹 删除安装目录: $INSTALL_DIR"
   fi
 
+  # 清理此 Agent 专用的 Realm 规则和运行时。
+  for realm_unit in /etc/systemd/system/flux-realm-*.service; do
+    [[ -e "$realm_unit" ]] || continue
+    realm_name=$(basename "$realm_unit")
+    systemctl disable --now "$realm_name" 2>/dev/null || true
+    rm -f "$realm_unit"
+  done
+  rm -rf "/var/lib/flux-panel/realm"
+  rm -f "$REALM_INSTALL_DIR/realm"
+
   # 重载 systemd
   systemctl daemon-reload
 
@@ -323,6 +432,31 @@ uninstall_gost() {
 
 # 主逻辑
 main() {
+  case "$CLI_ACTION" in
+    install)
+      install_gost
+      exit $?
+      ;;
+    update)
+      update_gost
+      exit $?
+      ;;
+    uninstall)
+      uninstall_gost
+      exit $?
+      ;;
+    block)
+      block_protocol
+      exit $?
+      ;;
+    "")
+      ;;
+    *)
+      echo "用法: $0 [-a 面板地址 -s 节点密钥] [install|update|uninstall|block]"
+      exit 1
+      ;;
+  esac
+
   # 如果提供了命令行参数，直接执行安装
   if [[ -n "$SERVER_ADDR" && -n "$SECRET" ]]; then
     install_gost

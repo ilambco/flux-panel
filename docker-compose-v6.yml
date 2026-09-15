@@ -26,7 +26,7 @@ services:
       retries: 10
 
   backend:
-    image: bqlpfy/springboot-backend:1.4.3
+    image: ghcr.io/ilambco/flux-panel-backend:${IMAGE_TAG:-main}
     container_name: springboot-backend
     restart: unless-stopped
     environment:
@@ -35,6 +35,7 @@ services:
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
       JWT_SECRET: ${JWT_SECRET}
+      FLUX_CHANNEL: ${IMAGE_TAG:-main}
       LOG_DIR: /app/logs
       JAVA_OPTS: "-Xms256m -Xmx512m -Dfile.encoding=UTF-8 -Duser.timezone=Asia/Shanghai"
     ports:
@@ -54,7 +55,7 @@ services:
       start_period: 90s
 
   frontend:
-    image: bqlpfy/vite-frontend:1.4.3
+    image: ghcr.io/ilambco/flux-panel-frontend:${IMAGE_TAG:-main}
     container_name: vite-frontend
     restart: unless-stopped
     ports:
@@ -82,5 +83,5 @@ networks:
     enable_ipv6: true
     ipam:
       config:
-        - subnet: 172.20.0.0/16 
+        - subnet: 172.20.0.0/16
         - subnet: fd00:dead:beef::/48

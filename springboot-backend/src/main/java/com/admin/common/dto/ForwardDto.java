@@ -21,6 +21,8 @@ public class ForwardDto {
     private String remoteAddr;
 
     private String strategy;
+
+    private String engine;
     
     /**
      * 入口端口（可选，为空时自动分配）
@@ -31,4 +33,4 @@ public class ForwardDto {
 
     private String interfaceName;
 
-} 
+}

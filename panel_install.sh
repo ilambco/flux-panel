@@ -7,12 +7,19 @@ export LC_ALL=C
 
 
 
-# 全局下载地址配置
-DOCKER_COMPOSEV4_URL="https://github.com/bqlpfy/flux-panel/releases/download/1.4.3/docker-compose-v4.yml"
-DOCKER_COMPOSEV6_URL="https://github.com/bqlpfy/flux-panel/releases/download/1.4.3/docker-compose-v6.yml"
-GOST_SQL_URL="https://github.com/bqlpfy/flux-panel/releases/download/1.4.3/gost.sql"
+# 发布通道：main 为稳定版，develop 为测试版。
+FLUX_REPOSITORY="${FLUX_REPOSITORY:-ilambco/flux-panel}"
+FLUX_CHANNEL="${FLUX_CHANNEL:-main}"
+if [[ "$FLUX_CHANNEL" != "main" && "$FLUX_CHANNEL" != "develop" ]]; then
+  echo "错误：FLUX_CHANNEL 仅支持 main 或 develop。"
+  exit 1
+fi
+RELEASE_BASE_URL="https://github.com/${FLUX_REPOSITORY}/releases/download/channel-${FLUX_CHANNEL}"
+DOCKER_COMPOSEV4_URL="${RELEASE_BASE_URL}/docker-compose-v4.yml"
+DOCKER_COMPOSEV6_URL="${RELEASE_BASE_URL}/docker-compose-v6.yml"
+GOST_SQL_URL="${RELEASE_BASE_URL}/gost.sql"
 
-COUNTRY=$(curl -s https://ipinfo.io/country)
+COUNTRY=$(curl -s https://ipinfo.io/country || true)
 if [ "$COUNTRY" = "CN" ]; then
     # 拼接 URL
     DOCKER_COMPOSEV4_URL="https://ghfast.top/${DOCKER_COMPOSEV4_URL}"
@@ -47,6 +54,58 @@ check_docker() {
     exit 1
   fi
   echo "检测到 Docker 命令：$DOCKER_CMD"
+}
+
+# 更新命令可在任意目录执行：优先使用当前位置，否则从已运行容器定位部署目录。
+locate_panel_directory() {
+  if [[ -f "docker-compose.yml" && -f ".env" ]]; then
+    return 0
+  fi
+
+  local working_dir
+  working_dir=$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}' springboot-backend 2>/dev/null || true)
+  if [[ -n "$working_dir" && -d "$working_dir" && -f "$working_dir/docker-compose.yml" && -f "$working_dir/.env" ]]; then
+    cd "$working_dir"
+    echo "📁 已定位面板目录: $working_dir"
+    return 0
+  fi
+
+  echo "❌ 未找到面板部署目录。请进入包含 docker-compose.yml 和 .env 的目录后重试。"
+  return 1
+}
+
+set_env_value() {
+  local key="$1" value="$2"
+  if grep -q "^${key}=" .env; then
+    sed -i "s|^${key}=.*|${key}=${value}|" .env
+  else
+    printf '%s=%s\n' "$key" "$value" >> .env
+  fi
+}
+
+backup_before_update() {
+  local timestamp db_name db_user db_password
+  timestamp=$(date +%Y%m%d_%H%M%S)
+  UPDATE_BACKUP_DIR="$(pwd)/.flux-backups/$timestamp"
+  mkdir -p "$UPDATE_BACKUP_DIR"
+  cp docker-compose.yml .env "$UPDATE_BACKUP_DIR/"
+  [[ -f gost.sql ]] && cp gost.sql "$UPDATE_BACKUP_DIR/"
+
+  db_name=$(grep '^DB_NAME=' .env | cut -d= -f2- || true)
+  db_user=$(grep '^DB_USER=' .env | cut -d= -f2- || true)
+  db_password=$(grep '^DB_PASSWORD=' .env | cut -d= -f2- || true)
+  if docker ps --format '{{.Names}}' | grep -q '^gost-mysql$' && [[ -n "$db_name" && -n "$db_user" && -n "$db_password" ]]; then
+    if docker exec gost-mysql mysqldump -u "$db_user" -p"$db_password" --single-transaction --routines --triggers "$db_name" > "$UPDATE_BACKUP_DIR/database.sql" 2>/dev/null; then
+      echo "✅ 数据库备份完成"
+    else
+      rm -f "$UPDATE_BACKUP_DIR/database.sql"
+      echo "❌ 数据库备份失败，已停止更新"
+      return 1
+    fi
+  else
+    echo "⚠️ 数据库容器未运行，仅备份了配置文件"
+  fi
+  echo "📦 更新备份: $UPDATE_BACKUP_DIR"
 }
 
 # 检测系统是否支持 IPv6
@@ -220,6 +279,7 @@ DB_PASSWORD=$DB_PASSWORD
 JWT_SECRET=$JWT_SECRET
 FRONTEND_PORT=$FRONTEND_PORT
 BACKEND_PORT=$BACKEND_PORT
+IMAGE_TAG=$FLUX_CHANNEL
 EOF
 
   echo "🚀 启动 docker 服务..."
@@ -239,11 +299,15 @@ EOF
 update_panel() {
   echo "🔄 开始更新面板..."
   check_docker
+  locate_panel_directory
+  backup_before_update
+  set_env_value "IMAGE_TAG" "$FLUX_CHANNEL"
 
   echo "🔽 下载最新配置文件..."
   DOCKER_COMPOSE_URL=$(get_docker_compose_url)
   echo "📡 选择配置文件：$(basename "$DOCKER_COMPOSE_URL")"
-  curl -L -o docker-compose.yml "$DOCKER_COMPOSE_URL"
+  curl --fail --location --retry 3 -o docker-compose.yml.new "$DOCKER_COMPOSE_URL"
+  mv docker-compose.yml.new docker-compose.yml
   echo "✅ 下载完成"
 
   # 自动检测并配置 IPv6 支持
@@ -252,13 +316,10 @@ update_panel() {
     configure_docker_ipv6
   fi
 
-  echo "🛑 停止当前服务..."
-  $DOCKER_CMD down
-
   echo "⬇️ 拉取最新镜像..."
   $DOCKER_CMD pull
 
-  echo "🚀 启动更新后的服务..."
+  echo "🚀 切换到更新后的服务..."
   $DOCKER_CMD up -d
 
   # 等待服务启动
@@ -801,6 +862,28 @@ UPDATE \`forward\`
 SET \`strategy\` = 'fifo'
 WHERE \`strategy\` IS NULL;
 
+-- forward 表：添加 engine 字段（转发运行时）
+SET @sql = (
+  SELECT IF(
+    NOT EXISTS (
+      SELECT 1
+      FROM information_schema.COLUMNS
+      WHERE table_schema = DATABASE()
+        AND table_name = 'forward'
+        AND column_name = 'engine'
+    ),
+    'ALTER TABLE \`forward\` ADD COLUMN \`engine\` VARCHAR(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT "gost" COMMENT "转发运行时";',
+    'SELECT "Column \`engine\` already exists in \`forward\`";'
+  )
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+UPDATE \`forward\`
+SET \`engine\` = 'gost'
+WHERE \`engine\` IS NULL OR \`engine\` = '';
+
 -- forward 表：添加 inx 字段（排序索引）
 SET @sql = (
   SELECT IF(
@@ -1074,6 +1157,35 @@ uninstall_panel() {
 
 # 主逻辑
 main() {
+
+  case "${1:-}" in
+    install)
+      install_panel
+      exit $?
+      ;;
+    update)
+      update_panel
+      exit $?
+      ;;
+    backup)
+      check_docker
+      locate_panel_directory
+      export_migration_sql
+      exit $?
+      ;;
+    uninstall)
+      check_docker
+      locate_panel_directory
+      uninstall_panel
+      exit $?
+      ;;
+    "")
+      ;;
+    *)
+      echo "用法: $0 [install|update|backup|uninstall]"
+      exit 1
+      ;;
+  esac
 
   # 显示交互式菜单
   while true; do

@@ -1,15 +1,8 @@
-# flux-panel转发面板 哆啦A梦转发面板
+# Flux Panel 转发面板
 
-## 项目更新说明
-由于一些个人原因，**flux-panel** 将暂停更新一段时间，**恢复更新时间暂不确定**。
+这是基于原版“哆啦A梦转发面板”维护的个人分支。本项目基于 [go-gost/gost](https://github.com/go-gost/gost) 和 [go-gost/x](https://github.com/go-gost/x)，用于集中管理转发节点和规则。
 
-在此期间，项目不会继续推进新功能或修复问题，对可能带来的不便表示抱歉。当前已有功能仍可正常使用，也欢迎大家继续 Fork 或自行维护。
-
-如后续恢复更新，我会第一时间在仓库中说明。  
-感谢大家的理解与支持。
-
-
-本项目基于 [go-gost/gost](https://github.com/go-gost/gost) 和 [go-gost/x](https://github.com/go-gost/x) 两个开源库，实现了转发面板。
+仓库使用两个发布通道：`develop` 用于边开发边部署测试，`main` 用于验证通过后的稳定版本。每次推送后，GitHub Actions 会自动检查代码、构建面板镜像和节点程序。
 ---
 ## 特性
 
@@ -19,31 +12,43 @@
 - 可针对 **指定用户的指定隧道进行限速** 设置
 - 支持配置 **单向或双向流量计费方式**，灵活适配不同计费模型
 - 提供灵活的转发策略配置，适用于多种网络场景
+- 管理员可为单节点端口转发选择 **Realm** 运行时（详见 [Realm 转发工具](doc/realm-forward.md)）
 
 
 ## 部署流程
 ---
-### Docker Compose部署
-#### 快速部署
-面板端(稳定版)：
-```bash
-curl -L https://raw.githubusercontent.com/bqlpfy/flux-panel/refs/heads/main/panel_install.sh -o panel_install.sh && chmod +x panel_install.sh && ./panel_install.sh
-```
-节点端(稳定版)：
-```bash
-curl -L https://raw.githubusercontent.com/bqlpfy/flux-panel/refs/heads/main/install.sh -o install.sh && chmod +x install.sh && ./install.sh
+### Docker Compose 部署
 
+#### 稳定版（main）
+
+面板端：
+```bash
+curl -fsSL https://github.com/ilambco/flux-panel/releases/download/channel-main/panel_install.sh -o panel_install.sh && chmod +x panel_install.sh && FLUX_CHANNEL=main ./panel_install.sh
 ```
 
-面板端(开发版)：
+节点端：
 ```bash
-curl -L https://raw.githubusercontent.com/bqlpfy/flux-panel/refs/heads/beta/panel_install.sh -o panel_install.sh && chmod +x panel_install.sh && ./panel_install.sh
+curl -fsSL https://github.com/ilambco/flux-panel/releases/download/channel-main/install.sh -o install.sh && chmod +x install.sh && FLUX_CHANNEL=main ./install.sh
 ```
-节点端(开发版)：
-```bash
-curl -L https://raw.githubusercontent.com/bqlpfy/flux-panel/refs/heads/beta/install.sh -o install.sh && chmod +x install.sh && ./install.sh
 
+#### 测试版（develop）
+
+首次安装面板：
+```bash
+curl -fsSL https://github.com/ilambco/flux-panel/releases/download/channel-develop/panel_install.sh -o panel_install.sh && chmod +x panel_install.sh && FLUX_CHANNEL=develop ./panel_install.sh
 ```
+
+更新已部署的面板（可在任意目录执行）：
+```bash
+curl -fsSL https://github.com/ilambco/flux-panel/releases/download/channel-develop/panel_install.sh -o /tmp/flux-panel-update.sh && FLUX_CHANNEL=develop bash /tmp/flux-panel-update.sh update
+```
+
+更新节点程序：
+```bash
+curl -fsSL https://github.com/ilambco/flux-panel/releases/download/channel-develop/install.sh -o /tmp/flux-node-update.sh && FLUX_CHANNEL=develop bash /tmp/flux-node-update.sh update
+```
+
+面板更新前会在部署目录的 `.flux-backups` 中保存配置和数据库。执行更新前，请先确认仓库 Actions 页面中 `develop` 的最新构建已经成功。
 
 #### 默认管理员账号
 
@@ -86,5 +91,5 @@ curl -L https://raw.githubusercontent.com/bqlpfy/flux-panel/refs/heads/beta/inst
 | TRC20      | `TYh2L3xxXpuJhAcBWnt3yiiADiCSJLgUm7`                                  |
 | Aptos      | `0xf2f9fb14749457748506a8281628d556e8540d1eb586d202cd8b02b99d369ef8`  |
 
-[![Star History Chart](https://api.star-history.com/svg?repos=bqlpfy/flux-panel&type=Date)](https://www.star-history.com/#bqlpfy/flux-panel&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=ilambco/flux-panel&type=Date)](https://www.star-history.com/#ilambco/flux-panel&Date)
 

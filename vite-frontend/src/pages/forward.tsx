@@ -56,6 +56,7 @@ interface Forward {
   remoteAddr: string;
   interfaceName?: string;
   strategy: string;
+  engine?: 'gost' | 'realm';
   status: number;
   inFlow: number;
   outFlow: number;
@@ -71,6 +72,7 @@ interface Tunnel {
   name: string;
   inNodePortSta?: number;
   inNodePortEnd?: number;
+  type?: number;
 }
 
 interface ForwardForm {
@@ -82,6 +84,7 @@ interface ForwardForm {
   remoteAddr: string;
   interfaceName?: string;
   strategy: string;
+  engine: 'gost' | 'realm';
 }
 
 interface AddressItem {
@@ -120,6 +123,7 @@ interface TunnelGroup {
 }
 
 export default function ForwardPage() {
+  const isAdmin = JwtUtil.getRoleIdFromToken() === 0;
   const [loading, setLoading] = useState(true);
   const [forwards, setForwards] = useState<Forward[]>([]);
   const [tunnels, setTunnels] = useState<Tunnel[]>([]);
@@ -191,7 +195,8 @@ export default function ForwardPage() {
     inPort: null,
     remoteAddr: '',
     interfaceName: '',
-    strategy: 'fifo'
+    strategy: 'fifo',
+    engine: 'gost'
   });
   
   // 表单验证错误
@@ -430,6 +435,14 @@ export default function ForwardPage() {
         newErrors.inPort = `端口号必须在${selectedTunnel.inNodePortSta}-${selectedTunnel.inNodePortEnd}范围内`;
       }
     }
+
+    if (form.engine === 'realm') {
+      const addressCount = form.remoteAddr.split('\n').map(addr => addr.trim()).filter(Boolean).length;
+      if (!isAdmin) newErrors.engine = 'Realm 当前仅供管理员自用';
+      if (selectedTunnel?.type !== 1) newErrors.engine = 'Realm 第一版仅支持单节点端口转发';
+      if (addressCount !== 1) newErrors.remoteAddr = 'Realm 第一版仅支持一个目标地址';
+      if (form.interfaceName?.trim()) newErrors.interfaceName = 'Realm 第一版暂不支持指定出口网卡或 IP';
+    }
     
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
@@ -444,7 +457,8 @@ export default function ForwardPage() {
       inPort: null,
       remoteAddr: '',
       interfaceName: '',
-      strategy: 'fifo'
+      strategy: 'fifo',
+      engine: 'gost'
     });
     setSelectedTunnel(null);
     setErrors({});
@@ -462,7 +476,8 @@ export default function ForwardPage() {
       inPort: forward.inPort,
       remoteAddr: forward.remoteAddr.split(',').join('\n'),
       interfaceName: forward.interfaceName || '',
-      strategy: forward.strategy || 'fifo'
+      strategy: forward.strategy || 'fifo',
+      engine: forward.engine || 'gost'
     });
     const tunnel = tunnels.find(t => t.id === forward.tunnelId);
     setSelectedTunnel(tunnel || null);
@@ -541,6 +556,7 @@ export default function ForwardPage() {
           inPort: form.inPort,
           remoteAddr: processedRemoteAddr,
           interfaceName: form.interfaceName,
+          engine: form.engine,
           strategy: addressCount > 1 ? form.strategy : 'fifo'
         };
         res = await updateForward(updateData);
@@ -552,6 +568,7 @@ export default function ForwardPage() {
           inPort: form.inPort,
           remoteAddr: processedRemoteAddr,
           interfaceName: form.interfaceName,
+          engine: form.engine,
           strategy: addressCount > 1 ? form.strategy : 'fifo'
         };
         res = await createForward(createData);
@@ -1274,6 +1291,9 @@ export default function ForwardPage() {
               <Chip color={strategyDisplay.color as any} variant="flat" size="sm" className="text-xs">
                 {strategyDisplay.text}
               </Chip>
+              <Chip variant="flat" size="sm" className="text-xs" color={forward.engine === 'realm' ? 'secondary' : 'default'}>
+                {(forward.engine || 'gost').toUpperCase()}
+              </Chip>
               <div className="flex items-center gap-1">
                 <Chip variant="flat" size="sm" className="text-xs" color="primary">
                   ↑{formatFlow(forward.inFlow || 0)}
@@ -1595,6 +1615,35 @@ export default function ForwardPage() {
                         </SelectItem>
                       ))}
                     </Select>
+
+                    {isAdmin && (
+                      <Select
+                        label="转发工具"
+                        selectedKeys={[form.engine]}
+                        onSelectionChange={(keys) => {
+                          const engine = Array.from(keys)[0] as 'gost' | 'realm';
+                          if (engine) {
+                            setForm(prev => ({
+                              ...prev,
+                              engine,
+                              interfaceName: engine === 'realm' ? '' : prev.interfaceName,
+                              strategy: engine === 'realm' ? 'fifo' : prev.strategy
+                            }));
+                          }
+                        }}
+                        isInvalid={!!errors.engine}
+                        errorMessage={errors.engine}
+                        variant="bordered"
+                        description="GOST 支持原有完整功能；Realm 第一版用于轻量单机转发"
+                      >
+                        <SelectItem key="gost">GOST（默认）</SelectItem>
+                        <SelectItem key="realm">Realm</SelectItem>
+                      </Select>
+                    )}
+
+                    {form.engine === 'realm' && (
+                      <Alert color="warning" variant="flat" title="Realm 当前支持 TCP + UDP、单节点和单目标；暂不统计单条规则流量，也不应用用户限速。" />
+                    )}
                     
                     <Input
                       label="入口端口"
@@ -1628,7 +1677,7 @@ export default function ForwardPage() {
                       maxRows={6}
                     />
                     
-                    <Input
+                    {form.engine !== 'realm' && <Input
                       label="出口网卡名或IP"
                       placeholder="请输入出口网卡名或IP"
                       value={form.interfaceName}
@@ -1637,7 +1686,7 @@ export default function ForwardPage() {
                       errorMessage={errors.interfaceName}
                       variant="bordered"
                       description="用于多IP服务器指定使用那个IP请求远程地址，不懂的默认为空就行"
-                    />
+                    />}
                     
                     {getAddressCount(form.remoteAddr) > 1 && (
                       <Select
@@ -2158,4 +2207,4 @@ export default function ForwardPage() {
       </div>
     
   );
-} 
+}

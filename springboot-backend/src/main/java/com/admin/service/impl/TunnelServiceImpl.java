@@ -205,6 +205,7 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
                     forwardUpdateDto.setTunnelId(forward.getTunnelId());
                     forwardUpdateDto.setRemoteAddr(forward.getRemoteAddr());
                     forwardUpdateDto.setStrategy(forward.getStrategy());
+                    forwardUpdateDto.setEngine(forward.getEngine());
                     forwardUpdateDto.setInPort(forward.getInPort());
                     forwardUpdateDto.setInterfaceName(forward.getInterfaceName());
                     R r = forwardService.updateForward(forwardUpdateDto);

@@ -1,6 +1,7 @@
 package com.admin.common.task;
 
 import com.admin.common.utils.GostUtil;
+import com.admin.common.utils.RealmUtil;
 import com.admin.entity.Forward;
 import com.admin.entity.Tunnel;
 import com.admin.entity.User;
@@ -231,8 +232,12 @@ public class ResetFlowAsync {
         Tunnel tunnel = tunnelService.getById(forward.getTunnelId());
         if (tunnel == null) return;
 
-        GostUtil.PauseService(tunnel.getInNodeId(), buildServiceName(forward.getId(), forward.getUserId(), userTunnelId));
-        if (tunnel.getType() == 2){
+        if ("realm".equalsIgnoreCase(forward.getEngine())) {
+            RealmUtil.pause(tunnel.getInNodeId(), forward.getId());
+        } else {
+            GostUtil.PauseService(tunnel.getInNodeId(), buildServiceName(forward.getId(), forward.getUserId(), userTunnelId));
+        }
+        if (!"realm".equalsIgnoreCase(forward.getEngine()) && tunnel.getType() == 2){
             GostUtil.PauseRemoteService(tunnel.getOutNodeId(), buildServiceName(forward.getId(), forward.getUserId(), userTunnelId));
         }
     }

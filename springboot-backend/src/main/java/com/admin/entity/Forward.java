@@ -36,6 +36,9 @@ public class Forward extends BaseEntity{
 
     private String strategy;
 
+    /** Runtime used by this rule: gost (legacy/default) or realm. */
+    private String engine;
+
     private Long inFlow;
 
     private Long outFlow;

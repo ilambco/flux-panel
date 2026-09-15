@@ -9,6 +9,7 @@ import com.admin.common.lang.R;
 import com.admin.common.utils.GostUtil;
 import com.admin.common.utils.JwtUtil;
 import com.admin.common.utils.Md5Util;
+import com.admin.common.utils.RealmUtil;
 import com.admin.entity.*;
 import com.admin.mapper.ForwardMapper;
 import com.admin.mapper.UserMapper;
@@ -567,6 +568,11 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
 
         Node inNode = nodeService.getNodeById(tunnel.getInNodeId());
         if (inNode == null) return;
+
+        if ("realm".equalsIgnoreCase(forward.getEngine())) {
+            RealmUtil.delete(inNode.getId(), forward.getId());
+            return;
+        }
 
         // 获取用户隧道关系
         UserTunnel userTunnel = getUserTunnelRelation(userId, tunnel.getId());
